@@ -115,6 +115,8 @@ uniform int u_hasShadow;
 uniform float u_shadowSize;
 uniform float u_shadowOpacity;
 uniform int u_isSelection;   // render as selection outline only
+uniform int u_textAlpha;     // 1 = alpha-only texture mode (glyph mask in R channel)
+uniform vec4 u_textColor;    // text color applied in alpha-only mode
 
 out vec4 outColor;
 
@@ -166,9 +168,13 @@ void main() {
 
   // Content
   vec4 col;
-  if (u_textured != 0) {
-    vec2 uv = u_texCrop.xy + (itemLocal / u_itemSize) * u_texCrop.zw;
-    uv = clamp(uv, vec2(0.0), vec2(1.0));
+  vec2 uv = u_texCrop.xy + (itemLocal / u_itemSize) * u_texCrop.zw;
+  uv = clamp(uv, vec2(0.0), vec2(1.0));
+  if (u_textAlpha != 0) {
+    // Alpha-only glyph mask: alpha channel holds per-pixel coverage, color is a uniform
+    float mask = texture(u_tex, uv).a;
+    col = vec4(u_textColor.rgb, u_textColor.a * mask);
+  } else if (u_textured != 0) {
     col = texture(u_tex, uv);
   } else {
     col = u_color;

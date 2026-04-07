@@ -126,8 +126,10 @@ export default function App() {
   }, [items]);
 
   // ── Load board on mount ──
+  // Wait for both board data AND web fonts before setting items so text is
+  // never rasterized with a fallback font.
   useEffect(() => {
-    loadBoard().then(({ items: loaded, bgGrid: savedGrid, homeView: savedHome, palette: savedPalette }) => {
+    Promise.all([loadBoard(), document.fonts.ready]).then(([{ items: loaded, bgGrid: savedGrid, homeView: savedHome, palette: savedPalette }]) => {
       if (savedGrid) setBgGrid(savedGrid);
       if (savedPalette) setPalette(savedPalette);
       if (savedHome) vp.homeViewRef.current = savedHome;
@@ -609,7 +611,7 @@ export default function App() {
         {isAdmin && (
           <div style={{ position: "absolute", top: 0, left: 0, zIndex: Z.HANDLES, pointerEvents: "none" }}>
             <div ref={canvasHandlesRef} style={{ transform: `translate(${vp.panRef.current.x}px,${vp.panRef.current.y}px) scale(${vp.zoomRef.current})`, transformOrigin: "0 0" }}>
-              {sortedItems.map(item => <CanvasItem key={item.id} item={item} renderHandles={true} selectedIds={selectedIds} isAdmin={isAdmin} editingTextId={editingTextId} globalShadow={globalShadow} deleteItems={deleteItems} updateItem={updateItem} setEditingTextId={setEditingTextId} />)}
+              {sortedItems.map(item => <CanvasItem key={item.id} item={item} selectedIds={selectedIds} isAdmin={isAdmin} editingTextId={editingTextId} deleteItems={deleteItems} updateItem={updateItem} setEditingTextId={setEditingTextId} />)}
               {(() => {
                 if (selectedIds.length < 2) return null;
                 const selItems = items.filter(i => selectedIds.includes(i.id));

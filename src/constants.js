@@ -9,6 +9,12 @@ export const DEFAULT_BG_GRID = {
 export const GRID_SPACINGS = [2, 4, 8, 16, 32, 64];
 export const SNAP_ANGLE = 15; // degrees for angle snapping
 
+// ── Text layout constants (shared between CSS textarea and Canvas2D rasterizer) ──
+export const TEXT_PAD_X = 12;    // horizontal padding (px)
+export const TEXT_PAD_Y = 8;     // vertical padding (px)
+export const TEXT_LINE_HEIGHT = 1.3; // line-height multiplier
+export const TEXT_DEFAULT_SIZE = 24; // default fontSize (px)
+
 export const FONTS = [
   { label: "DM Sans", value: "'DM Sans', sans-serif" },
   { label: "Georgia", value: "Georgia, serif" },

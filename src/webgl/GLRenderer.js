@@ -100,6 +100,7 @@ export class GLRenderer {
       'u_radius', 'u_color', 'u_textured', 'u_tex', 'u_texCrop',
       'u_opacity', 'u_borderColor', 'u_borderWidth',
       'u_hasShadow', 'u_shadowSize', 'u_shadowOpacity', 'u_isSelection',
+      'u_textAlpha', 'u_textColor',
     ]);
 
     // Line program
@@ -289,8 +290,9 @@ export class GLRenderer {
 
     const u = this.quadU;
 
-    // If currently editing this text item, skip rendering it (DOM textarea overlay is shown)
-    if (editingTextId === item.id) return;
+    // For non-text items being edited, skip entirely.
+    // Text/link items handled below — background still renders during edit.
+    if (editingTextId === item.id && item.type !== 'text' && item.type !== 'link') return;
 
     const hasShadow = globalShadow?.enabled && this._itemShadowEnabled(item);
     const shadowSize = hasShadow ? (globalShadow.size || 1.5) : 0;
@@ -370,14 +372,36 @@ export class GLRenderer {
       gl.uniform4f(u.u_texCrop, crop[0], crop[1], crop[2], crop[3]);
       gl.uniform4f(u.u_color, 0, 0, 0, 1);
     } else if (item.type === 'text' || item.type === 'link') {
-      // Render text to texture
-      const entry = this.textRenderer.get(item);
-      gl.uniform1i(u.u_textured, 1);
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, entry.tex);
-      gl.uniform1i(u.u_tex, 0);
-      gl.uniform4f(u.u_texCrop, 0, 0, 1, 1);
-      gl.uniform4f(u.u_color, 1, 1, 1, 1);
+      const isEditing = editingTextId === item.id;
+
+      // Pass 1: background fill — always rendered, even during editing
+      const bgColor = this._getBgColor(item);
+      if (bgColor[3] > 0) {
+        gl.uniform1i(u.u_textured, 0);
+        gl.uniform1i(u.u_textAlpha, 0);
+        gl.uniform4fv(u.u_color, bgColor);
+        gl.uniform4f(u.u_texCrop, 0, 0, 1, 1);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
+
+      // Pass 2: glyph alpha mask — skipped while editing (textarea handles text display)
+      if (!isEditing) {
+        const entry = this.textRenderer.get(item);
+        const textRgba = hexToRgba(item.color || '#C2C0B6');
+        gl.uniform1i(u.u_textured, 0);
+        gl.uniform1i(u.u_textAlpha, 1);
+        gl.uniform4fv(u.u_textColor, textRgba);
+        gl.uniform4f(u.u_texCrop, 0, 0, 1, 1);
+        gl.uniform1i(u.u_hasShadow, 0);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, entry.tex);
+        gl.uniform1i(u.u_tex, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
+
+      gl.uniform1i(u.u_textAlpha, 0);
+      gl.bindVertexArray(null);
+      return;
     } else if (item.type === 'shape') {
       gl.uniform1i(u.u_textured, 0);
       const bgColor = this._getBgColor(item);
