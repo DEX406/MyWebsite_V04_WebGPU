@@ -100,6 +100,7 @@ export class GLRenderer {
       'u_radius', 'u_color', 'u_textured', 'u_tex', 'u_texCrop',
       'u_opacity', 'u_borderColor', 'u_borderWidth',
       'u_hasShadow', 'u_shadowSize', 'u_shadowOpacity', 'u_isSelection',
+      'u_textAlpha', 'u_textColor',
     ]);
 
     // Line program
@@ -370,14 +371,33 @@ export class GLRenderer {
       gl.uniform4f(u.u_texCrop, crop[0], crop[1], crop[2], crop[3]);
       gl.uniform4f(u.u_color, 0, 0, 0, 1);
     } else if (item.type === 'text' || item.type === 'link') {
-      // Render text to texture
+      // Pass 1: background fill (solid color quad, no texture, no rebake needed)
+      const bgColor = this._getBgColor(item);
+      if (bgColor[3] > 0) {
+        gl.uniform1i(u.u_textured, 0);
+        gl.uniform1i(u.u_textAlpha, 0);
+        gl.uniform4fv(u.u_color, bgColor);
+        gl.uniform4f(u.u_texCrop, 0, 0, 1, 1);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
+
+      // Pass 2: glyph alpha mask — R8 texture, color applied as uniform
       const entry = this.textRenderer.get(item);
-      gl.uniform1i(u.u_textured, 1);
+      const textRgba = hexToRgba(item.color || '#C2C0B6');
+      gl.uniform1i(u.u_textured, 0);   // texture sampled via u_textAlpha branch, not u_textured
+      gl.uniform1i(u.u_textAlpha, 1);
+      gl.uniform4fv(u.u_textColor, textRgba);
+      gl.uniform4f(u.u_texCrop, 0, 0, 1, 1);
+      gl.uniform1i(u.u_hasShadow, 0);  // shadow belongs to the bg pass only
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, entry.tex);
       gl.uniform1i(u.u_tex, 0);
-      gl.uniform4f(u.u_texCrop, 0, 0, 1, 1);
-      gl.uniform4f(u.u_color, 1, 1, 1, 1);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+      // Reset alpha mode so subsequent items use normal paths
+      gl.uniform1i(u.u_textAlpha, 0);
+      gl.bindVertexArray(null);
+      return;
     } else if (item.type === 'shape') {
       gl.uniform1i(u.u_textured, 0);
       const bgColor = this._getBgColor(item);

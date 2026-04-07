@@ -1,7 +1,6 @@
-// Renders text items to offscreen Canvas2D and uploads as WebGL textures.
-// Caches based on a hash of all text-affecting properties.
-
-import { applyBg } from '../utils.js';
+// Renders text items to offscreen Canvas2D alpha-mask textures.
+// Only the glyph shape is baked in; color and background are shader uniforms.
+// Caches based on properties that affect glyph shape only.
 
 export class TextRenderer {
   constructor(gl) {
@@ -12,9 +11,10 @@ export class TextRenderer {
     this.ctx = this.canvas.getContext('2d');
   }
 
-  // Generate a cache key from item properties
+  // Cache key covers only what affects glyph shape.
+  // Color, bgColor, bgOpacity are now shader uniforms — no texture re-upload needed when they change.
   _key(item) {
-    return `${item.id}|${item.type}|${item.text}|${item.fontSize}|${item.fontFamily}|${item.color}|${item.bold}|${item.italic}|${item.align}|${item.w}|${item.h}|${item.bgColor}|${item.bgOpacity ?? 1}`;
+    return `${item.id}|${item.type}|${item.text}|${item.fontSize}|${item.fontFamily}|${item.bold}|${item.italic}|${item.align}|${item.w}|${item.h}`;
   }
 
   // Get or create a texture for a text/link item.
@@ -63,23 +63,15 @@ export class TextRenderer {
     ctx.clearRect(0, 0, w, h);
     ctx.scale(scale, scale);
 
-    // Background
-    const bgColor = applyBg(item);
-    if (bgColor !== 'transparent') {
-      ctx.fillStyle = bgColor;
-      ctx.fillRect(0, 0, item.w, item.h);
-    }
-
-    // Text
+    // Render glyph mask only — white text on transparent background.
+    // Color and background are applied later as shader uniforms (no rebake needed when they change).
     if (item.text) {
       const padX = 12, padY = 8;
       const fontSize = item.fontSize || 24;
-      const fontWeight = item.bold ? 'bold' : 'normal';
-      const fontStyle = item.italic ? 'italic' : 'normal';
       const fontFamily = item.fontFamily || "'DM Sans', sans-serif";
 
-      ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
-      ctx.fillStyle = item.color || '#C2C0B6';
+      ctx.font = `${item.italic ? 'italic' : 'normal'} ${item.bold ? 'bold' : 'normal'} ${fontSize}px ${fontFamily}`;
+      ctx.fillStyle = 'white';
       ctx.textBaseline = 'top';
       ctx.textAlign = item.align || 'left';
 
@@ -92,11 +84,10 @@ export class TextRenderer {
       else if (item.align === 'right') x = item.w - padX;
       else x = padX;
 
-      // For link items, vertically center
+      // Link items vertically center their text
       let startY = padY;
       if (item.type === 'link') {
-        const totalHeight = lines.length * lineHeight;
-        startY = (item.h - totalHeight) / 2;
+        startY = (item.h - lines.length * lineHeight) / 2;
       }
 
       for (let i = 0; i < lines.length; i++) {
@@ -108,12 +99,19 @@ export class TextRenderer {
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-    // Upload to texture
+    // Extract alpha channel into a compact Uint8Array (1 byte/pixel vs 4 for RGBA)
+    const rgba = ctx.getImageData(0, 0, w, h).data;
+    const alpha = new Uint8Array(w * h);
+    for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4 + 3];
+
+    // Upload as single-channel R8 texture
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.canvas);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); // R8 rows are not 4-byte aligned
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, alpha);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4); // restore default for image textures
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
