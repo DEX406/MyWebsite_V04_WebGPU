@@ -196,6 +196,7 @@ export function CanvasItem({ item, renderHandles, selectedIds, isAdmin, editingT
                 position: "absolute", left: item.x, top: item.y, width: item.w, height: item.h,
                 transform: `rotate(${item.rotation || 0}deg)`, transformOrigin: "center center",
                 resize: "none", border: "none", outline: "2px solid rgba(44,132,219,0.7)",
+                overflow: "hidden",
                 pointerEvents: "auto", touchAction: "auto",
                 // Match WebGL text renderer exactly so text doesn't shift on deselect
                 lineHeight: `${fs * 1.3}px`,
