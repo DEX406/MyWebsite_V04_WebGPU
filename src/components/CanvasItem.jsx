@@ -176,12 +176,6 @@ export function CanvasItem({ item, renderHandles, selectedIds, isAdmin, editingT
     const isEd = editingTextId === item.id && (item.type === "text" || item.type === "link");
     return (
       <>
-        <ItemHandles item={item} deleteItems={deleteItems} />
-        {(item.type === "image" || item.type === "video") && (
-          <div style={{ position: "absolute", left: item.x, top: item.y, width: item.w, height: item.h, zIndex: Z.HANDLE_INFO, pointerEvents: "none" }}>
-            <ImageInfoPill src={item.src} item={item} />
-          </div>
-        )}
         {isEd && (() => {
           const fs = item.fontSize || 24;
           const bg = applyBg(item);
@@ -208,10 +202,16 @@ export function CanvasItem({ item, renderHandles, selectedIds, isAdmin, editingT
                 fontSize: fs, fontFamily: item.fontFamily || "'DM Sans', sans-serif",
                 fontWeight: item.bold ? "bold" : "normal", fontStyle: item.italic ? "italic" : "normal",
                 textAlign: item.align || "left",
-                zIndex: Z.HANDLES + 1,
+                zIndex: Z.HANDLE_INFO, // below HANDLE_GRIP so handles stay in front
               }} />
           );
         })()}
+        <ItemHandles item={item} deleteItems={deleteItems} />
+        {(item.type === "image" || item.type === "video") && (
+          <div style={{ position: "absolute", left: item.x, top: item.y, width: item.w, height: item.h, zIndex: Z.HANDLE_INFO, pointerEvents: "none" }}>
+            <ImageInfoPill src={item.src} item={item} />
+          </div>
+        )}
       </>
     );
   }
