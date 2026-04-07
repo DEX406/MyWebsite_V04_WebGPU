@@ -161,6 +161,13 @@ export class TextRenderer {
     }
   }
 
+  // Invalidate every cached texture — use when fonts finish loading
+  invalidateAll() {
+    for (const entry of this.cache.values()) this.gl.deleteTexture(entry.tex);
+    this.cache.clear();
+    this.itemKeys.clear();
+  }
+
   destroy() {
     for (const entry of this.cache.values()) {
       this.gl.deleteTexture(entry.tex);

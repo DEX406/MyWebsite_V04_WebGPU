@@ -146,6 +146,18 @@ export default function App() {
     });
   }, []);
 
+  // ── Re-rasterize text once web fonts are ready ──
+  // Canvas2D falls back to sans-serif if DM Sans hasn't loaded yet on first render.
+  // Wait for both the board items and document fonts to be ready, then flush the cache.
+  useEffect(() => {
+    if (loading) return;
+    document.fonts.ready.then(() => {
+      const renderer = webgl.rendererRef.current;
+      if (renderer) renderer.textRenderer.invalidateAll();
+      if (drawBgRef.current) drawBgRef.current();
+    });
+  }, [loading]);
+
   // ── Persist settings ──
   useEffect(() => { try { localStorage.setItem("lutz-shadow-settings", JSON.stringify(globalShadow)); } catch {} }, [globalShadow]);
   // bgGrid and palette changes trigger a board save (defined after scheduleSave below)
