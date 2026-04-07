@@ -606,38 +606,6 @@ export default function App() {
         {/* WebGL canvas — renders grid + all content items */}
         <canvas ref={webgl.setCanvasRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", imageRendering: "auto" }} />
 
-        {/* Text editing overlay — positioned over the text item being edited */}
-        {editingTextId && (() => {
-          const item = items.find(i => i.id === editingTextId);
-          if (!item || (item.type !== 'text' && item.type !== 'link')) return null;
-          const z = vp.zoomRef.current;
-          const px = item.x * z + vp.panRef.current.x;
-          const py = item.y * z + vp.panRef.current.y;
-          const sw = item.w * z;
-          const sh = item.h * z;
-          const bg = applyBg(item);
-          const editBg = bg === 'transparent' ? 'rgba(194,192,182,0.05)' : bg;
-          return (
-            <textarea data-ui autoFocus value={item.text}
-              onFocus={() => { if (item.placeholder) updateItem(item.id, { text: "", placeholder: false }); }}
-              onChange={e => updateItem(item.id, { text: e.target.value })}
-              onBlur={() => setEditingTextId(null)}
-              onPointerDown={e => e.stopPropagation()}
-              onTouchStart={e => e.stopPropagation()}
-              style={{
-                position: "absolute", left: px, top: py, width: sw, height: sh,
-                transform: `rotate(${item.rotation || 0}deg)`, transformOrigin: "center center",
-                resize: "none", border: "none", outline: "2px solid rgba(44,132,219,0.7)",
-                touchAction: "auto", background: editBg,
-                color: item.color, fontSize: (item.fontSize || 24) * z,
-                fontFamily: item.fontFamily || "'DM Sans', sans-serif",
-                fontWeight: item.bold ? "bold" : "normal", fontStyle: item.italic ? "italic" : "normal",
-                textAlign: item.align || "left", padding: `${8*z}px ${12*z}px`, boxSizing: "border-box",
-                zIndex: Z.HANDLES + 1,
-              }} />
-          );
-        })()}
-
         {isAdmin && (
           <div style={{ position: "absolute", top: 0, left: 0, zIndex: Z.HANDLES, pointerEvents: "none" }}>
             <div ref={canvasHandlesRef} style={{ transform: `translate(${vp.panRef.current.x}px,${vp.panRef.current.y}px) scale(${vp.zoomRef.current})`, transformOrigin: "0 0" }}>
