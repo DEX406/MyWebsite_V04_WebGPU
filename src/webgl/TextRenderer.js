@@ -54,7 +54,7 @@ export class TextRenderer {
 
   _render(item) {
     const gl = this.gl;
-    const scale = (window.devicePixelRatio || 1) * 4;
+    const scale = 4;
     const w = Math.ceil(item.w * scale);
     const h = Math.ceil(item.h * scale);
 
