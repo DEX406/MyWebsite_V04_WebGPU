@@ -126,8 +126,10 @@ export default function App() {
   }, [items]);
 
   // ── Load board on mount ──
+  // Wait for both board data AND web fonts before setting items so text is
+  // never rasterized with a fallback font.
   useEffect(() => {
-    loadBoard().then(({ items: loaded, bgGrid: savedGrid, homeView: savedHome, palette: savedPalette }) => {
+    Promise.all([loadBoard(), document.fonts.ready]).then(([{ items: loaded, bgGrid: savedGrid, homeView: savedHome, palette: savedPalette }]) => {
       if (savedGrid) setBgGrid(savedGrid);
       if (savedPalette) setPalette(savedPalette);
       if (savedHome) vp.homeViewRef.current = savedHome;
@@ -145,18 +147,6 @@ export default function App() {
       setLoading(false);
     });
   }, []);
-
-  // ── Re-rasterize text once web fonts are ready ──
-  // Canvas2D falls back to sans-serif if DM Sans hasn't loaded yet on first render.
-  // Wait for both the board items and document fonts to be ready, then flush the cache.
-  useEffect(() => {
-    if (loading) return;
-    document.fonts.ready.then(() => {
-      const renderer = webgl.rendererRef.current;
-      if (renderer) renderer.textRenderer.invalidateAll();
-      if (drawBgRef.current) drawBgRef.current();
-    });
-  }, [loading]);
 
   // ── Persist settings ──
   useEffect(() => { try { localStorage.setItem("lutz-shadow-settings", JSON.stringify(globalShadow)); } catch {} }, [globalShadow]);
