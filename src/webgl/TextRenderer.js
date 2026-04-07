@@ -1,6 +1,8 @@
 // Renders text items to offscreen Canvas2D and uploads as WebGL textures.
 // Caches based on a hash of all text-affecting properties.
 
+import { applyBg } from '../utils.js';
+
 export class TextRenderer {
   constructor(gl) {
     this.gl = gl;
@@ -11,7 +13,7 @@ export class TextRenderer {
 
   // Generate a cache key from item properties
   _key(item) {
-    return `${item.id}|${item.text}|${item.fontSize}|${item.fontFamily}|${item.color}|${item.bold}|${item.italic}|${item.align}|${item.w}|${item.h}|${item.bgColor}|${item.bgOpacity ?? 1}`;
+    return `${item.id}|${item.type}|${item.text}|${item.fontSize}|${item.fontFamily}|${item.color}|${item.bold}|${item.italic}|${item.align}|${item.w}|${item.h}|${item.bgColor}|${item.bgOpacity ?? 1}`;
   }
 
   // Get or create a texture for a text/link item.
@@ -48,7 +50,7 @@ export class TextRenderer {
     ctx.scale(scale, scale);
 
     // Background
-    const bgColor = this._applyBg(item);
+    const bgColor = applyBg(item);
     if (bgColor !== 'transparent') {
       ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, item.w, item.h);
@@ -124,17 +126,6 @@ export class TextRenderer {
       if (currentLine) lines.push(currentLine);
     }
     return lines.length ? lines : [''];
-  }
-
-  _applyBg(item) {
-    if (!item.bgColor || item.bgColor === 'transparent') return 'transparent';
-    const op = item.bgOpacity ?? 1;
-    if (op <= 0) return 'transparent';
-    const hex = item.bgColor.replace('#', '');
-    const r = parseInt(hex.slice(0, 2), 16);
-    const g = parseInt(hex.slice(2, 4), 16);
-    const b = parseInt(hex.slice(4, 6), 16);
-    return op >= 1 ? item.bgColor : `rgba(${r},${g},${b},${op})`;
   }
 
   _evict() {
