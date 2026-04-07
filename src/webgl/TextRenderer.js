@@ -79,15 +79,19 @@ export class TextRenderer {
       const lines = this._wrapText(ctx, item.text, maxWidth);
       const lineHeight = fontSize * 1.3;
 
+      // CSS distributes (lineHeight - fontSize) as half-leading above and below each line.
+      // textBaseline='top' sits at the em-square top with no leading, so we must add
+      // the half-leading offset to match where CSS places the first character.
+      const halfLeading = (lineHeight - fontSize) / 2;
+
       let x;
       if (item.align === 'center') x = item.w / 2;
       else if (item.align === 'right') x = item.w - padX;
       else x = padX;
 
-      // Link items vertically center their text
-      let startY = padY;
+      let startY = padY + halfLeading;
       if (item.type === 'link') {
-        startY = (item.h - lines.length * lineHeight) / 2;
+        startY = (item.h - lines.length * lineHeight) / 2 + halfLeading;
       }
 
       for (let i = 0; i < lines.length; i++) {
