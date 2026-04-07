@@ -178,7 +178,6 @@ export function CanvasItem({ item, renderHandles, selectedIds, isAdmin, editingT
       <>
         {isEd && (() => {
           const fs = item.fontSize || 24;
-          const bg = applyBg(item);
           return (
             <textarea data-ui autoFocus value={item.text}
               onFocus={() => { if (item.placeholder) updateItem(item.id, { text: "", placeholder: false }); }}
@@ -195,9 +194,9 @@ export function CanvasItem({ item, renderHandles, selectedIds, isAdmin, editingT
                 // Match WebGL text renderer exactly so text doesn't shift on deselect
                 lineHeight: `${fs * 1.3}px`,
                 padding: "8px 12px", boxSizing: "border-box",
-                // Strip iOS/browser native appearance to prevent black box
+                // Strip iOS/browser native appearance; bg is transparent — rasterized bg shows through
                 WebkitAppearance: "none", appearance: "none",
-                background: bg === "transparent" ? "rgba(194,192,182,0.05)" : bg,
+                background: "transparent",
                 color: item.color, WebkitTextFillColor: item.color,
                 fontSize: fs, fontFamily: item.fontFamily || "'DM Sans', sans-serif",
                 fontWeight: item.bold ? "bold" : "normal", fontStyle: item.italic ? "italic" : "normal",
