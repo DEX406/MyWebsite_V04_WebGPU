@@ -172,16 +172,48 @@ export function CanvasItem({ item, renderHandles, selectedIds, isAdmin, editingT
   }
 
   // Non-connector handles
-  if (renderHandles) return (
-    <>
-      <ItemHandles item={item} deleteItems={deleteItems} />
-      {(item.type === "image" || item.type === "video") && (
-        <div style={{ position: "absolute", left: item.x, top: item.y, width: item.w, height: item.h, zIndex: Z.HANDLE_INFO, pointerEvents: "none" }}>
-          <ImageInfoPill src={item.src} item={item} />
-        </div>
-      )}
-    </>
-  );
+  if (renderHandles) {
+    const isEd = editingTextId === item.id && (item.type === "text" || item.type === "link");
+    return (
+      <>
+        <ItemHandles item={item} deleteItems={deleteItems} />
+        {(item.type === "image" || item.type === "video") && (
+          <div style={{ position: "absolute", left: item.x, top: item.y, width: item.w, height: item.h, zIndex: Z.HANDLE_INFO, pointerEvents: "none" }}>
+            <ImageInfoPill src={item.src} item={item} />
+          </div>
+        )}
+        {isEd && (() => {
+          const fs = item.fontSize || 24;
+          const bg = applyBg(item);
+          return (
+            <textarea data-ui autoFocus value={item.text}
+              onFocus={() => { if (item.placeholder) updateItem(item.id, { text: "", placeholder: false }); }}
+              onChange={e => updateItem(item.id, { text: e.target.value })}
+              onBlur={() => setEditingTextId(null)}
+              onPointerDown={e => e.stopPropagation()}
+              onTouchStart={e => e.stopPropagation()}
+              style={{
+                position: "absolute", left: item.x, top: item.y, width: item.w, height: item.h,
+                transform: `rotate(${item.rotation || 0}deg)`, transformOrigin: "center center",
+                resize: "none", border: "none", outline: "2px solid rgba(44,132,219,0.7)",
+                pointerEvents: "auto", touchAction: "auto",
+                // Match WebGL text renderer exactly so text doesn't shift on deselect
+                lineHeight: `${fs * 1.3}px`,
+                padding: "8px 12px", boxSizing: "border-box",
+                // Strip iOS/browser native appearance to prevent black box
+                WebkitAppearance: "none", appearance: "none",
+                background: bg === "transparent" ? "rgba(194,192,182,0.05)" : bg,
+                color: item.color, WebkitTextFillColor: item.color,
+                fontSize: fs, fontFamily: item.fontFamily || "'DM Sans', sans-serif",
+                fontWeight: item.bold ? "bold" : "normal", fontStyle: item.italic ? "italic" : "normal",
+                textAlign: item.align || "left",
+                zIndex: Z.HANDLES + 1,
+              }} />
+          );
+        })()}
+      </>
+    );
+  }
 
   // Content rendering
   const containerStyle = {

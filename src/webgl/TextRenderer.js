@@ -1,32 +1,48 @@
 // Renders text items to offscreen Canvas2D and uploads as WebGL textures.
 // Caches based on a hash of all text-affecting properties.
 
+import { applyBg } from '../utils.js';
+
 export class TextRenderer {
   constructor(gl) {
     this.gl = gl;
-    this.cache = new Map(); // hash → { tex, width, height }
+    this.cache = new Map();    // key → { tex, width, height, lastUsed }
+    this.itemKeys = new Map(); // itemId → current cache key (1 live texture per item)
     this.canvas = document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d');
   }
 
   // Generate a cache key from item properties
   _key(item) {
-    return `${item.id}|${item.text}|${item.fontSize}|${item.fontFamily}|${item.color}|${item.bold}|${item.italic}|${item.align}|${item.w}|${item.h}|${item.bgColor}|${item.bgOpacity ?? 1}`;
+    return `${item.id}|${item.type}|${item.text}|${item.fontSize}|${item.fontFamily}|${item.color}|${item.bold}|${item.italic}|${item.align}|${item.w}|${item.h}|${item.bgColor}|${item.bgOpacity ?? 1}`;
   }
 
   // Get or create a texture for a text/link item.
   // Returns { tex, width, height }
   get(item) {
     const key = this._key(item);
+
+    // If this item's properties changed, immediately free the old GPU texture
+    const prevKey = this.itemKeys.get(item.id);
+    if (prevKey && prevKey !== key) {
+      const old = this.cache.get(prevKey);
+      if (old) {
+        this.gl.deleteTexture(old.tex);
+        this.cache.delete(prevKey);
+      }
+    }
+
     const cached = this.cache.get(key);
     if (cached) {
       cached.lastUsed = performance.now();
+      this.itemKeys.set(item.id, key);
       return cached;
     }
 
     const entry = this._render(item);
     entry.lastUsed = performance.now();
     this.cache.set(key, entry);
+    this.itemKeys.set(item.id, key);
 
     // Evict old entries if cache is large
     if (this.cache.size > 200) this._evict();
@@ -48,7 +64,7 @@ export class TextRenderer {
     ctx.scale(scale, scale);
 
     // Background
-    const bgColor = this._applyBg(item);
+    const bgColor = applyBg(item);
     if (bgColor !== 'transparent') {
       ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, item.w, item.h);
@@ -126,17 +142,6 @@ export class TextRenderer {
     return lines.length ? lines : [''];
   }
 
-  _applyBg(item) {
-    if (!item.bgColor || item.bgColor === 'transparent') return 'transparent';
-    const op = item.bgOpacity ?? 1;
-    if (op <= 0) return 'transparent';
-    const hex = item.bgColor.replace('#', '');
-    const r = parseInt(hex.slice(0, 2), 16);
-    const g = parseInt(hex.slice(2, 4), 16);
-    const b = parseInt(hex.slice(4, 6), 16);
-    return op >= 1 ? item.bgColor : `rgba(${r},${g},${b},${op})`;
-  }
-
   _evict() {
     // Remove oldest 50 entries
     const entries = [...this.cache.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed);
@@ -147,13 +152,16 @@ export class TextRenderer {
     }
   }
 
-  // Invalidate a specific item's cache (call when item text/style changes)
+  // Invalidate a specific item's cached texture immediately
   invalidate(itemId) {
-    for (const [key, entry] of this.cache) {
-      if (key.startsWith(itemId + '|')) {
+    const key = this.itemKeys.get(itemId);
+    if (key) {
+      const entry = this.cache.get(key);
+      if (entry) {
         this.gl.deleteTexture(entry.tex);
         this.cache.delete(key);
       }
+      this.itemKeys.delete(itemId);
     }
   }
 
@@ -162,5 +170,6 @@ export class TextRenderer {
       this.gl.deleteTexture(entry.tex);
     }
     this.cache.clear();
+    this.itemKeys.clear();
   }
 }
