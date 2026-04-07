@@ -193,7 +193,7 @@ export function CanvasItem({ item, renderHandles, selectedIds, isAdmin, editingT
               position: "absolute", left: item.x, top: item.y, width: item.w, height: item.h,
               transform: `rotate(${item.rotation || 0}deg)`, transformOrigin: "center center",
               resize: "none", border: "none", outline: "2px solid rgba(44,132,219,0.7)",
-              touchAction: "auto", background: applyBg(item) === "transparent" ? "rgba(194,192,182,0.05)" : applyBg(item),
+              pointerEvents: "auto", touchAction: "auto", background: applyBg(item) === "transparent" ? "rgba(194,192,182,0.05)" : applyBg(item),
               color: item.color, fontSize: item.fontSize || 24,
               fontFamily: item.fontFamily || "'DM Sans', sans-serif",
               fontWeight: item.bold ? "bold" : "normal", fontStyle: item.italic ? "italic" : "normal",
