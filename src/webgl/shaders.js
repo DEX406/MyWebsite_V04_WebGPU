@@ -171,8 +171,8 @@ void main() {
   vec2 uv = u_texCrop.xy + (itemLocal / u_itemSize) * u_texCrop.zw;
   uv = clamp(uv, vec2(0.0), vec2(1.0));
   if (u_textAlpha != 0) {
-    // Alpha-only glyph mask: R channel holds per-pixel coverage, color is a uniform
-    float mask = texture(u_tex, uv).r;
+    // Alpha-only glyph mask: alpha channel holds per-pixel coverage, color is a uniform
+    float mask = texture(u_tex, uv).a;
     col = vec4(u_textColor.rgb, u_textColor.a * mask);
   } else if (u_textured != 0) {
     col = texture(u_tex, uv);

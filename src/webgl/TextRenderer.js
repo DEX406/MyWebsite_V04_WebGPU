@@ -99,17 +99,11 @@ export class TextRenderer {
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-    // Extract alpha channel into a compact Uint8Array (1 byte/pixel vs 4 for RGBA)
-    const rgba = ctx.getImageData(0, 0, w, h).data;
-    const alpha = new Uint8Array(w * h);
-    for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4 + 3];
-
-    // Upload as single-channel R8 texture
+    // Upload canvas directly — the browser transfers it GPU-side without any CPU readback.
+    // The alpha channel carries the glyph mask; sampled as .a in the shader.
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); // R8 rows are not 4-byte aligned
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, alpha);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4); // restore default for image textures
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.canvas);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
