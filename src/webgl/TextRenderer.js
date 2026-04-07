@@ -118,9 +118,7 @@ export class TextRenderer {
 
   _wrapText(ctx, text, maxWidth) {
     const lines = [];
-    // Handle explicit newlines (pre-wrap)
-    const paragraphs = text.split('\n');
-    for (const para of paragraphs) {
+    for (const para of text.split('\n')) {
       if (!para) { lines.push(''); continue; }
       const words = para.split(/(\s+)/);
       let currentLine = '';
@@ -131,6 +129,20 @@ export class TextRenderer {
           currentLine = word.trimStart();
         } else {
           currentLine = test;
+        }
+        // word-break: break-word — if the current segment alone exceeds maxWidth,
+        // split it character by character (matches CSS textarea behaviour)
+        if (ctx.measureText(currentLine).width > maxWidth) {
+          let partial = '';
+          for (const ch of currentLine) {
+            if (ctx.measureText(partial + ch).width > maxWidth && partial) {
+              lines.push(partial);
+              partial = ch;
+            } else {
+              partial += ch;
+            }
+          }
+          currentLine = partial;
         }
       }
       if (currentLine) lines.push(currentLine);
