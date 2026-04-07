@@ -6,7 +6,8 @@ import { applyBg } from '../utils.js';
 export class TextRenderer {
   constructor(gl) {
     this.gl = gl;
-    this.cache = new Map(); // hash → { tex, width, height }
+    this.cache = new Map();    // key → { tex, width, height, lastUsed }
+    this.itemKeys = new Map(); // itemId → current cache key (1 live texture per item)
     this.canvas = document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d');
   }
@@ -20,15 +21,28 @@ export class TextRenderer {
   // Returns { tex, width, height }
   get(item) {
     const key = this._key(item);
+
+    // If this item's properties changed, immediately free the old GPU texture
+    const prevKey = this.itemKeys.get(item.id);
+    if (prevKey && prevKey !== key) {
+      const old = this.cache.get(prevKey);
+      if (old) {
+        this.gl.deleteTexture(old.tex);
+        this.cache.delete(prevKey);
+      }
+    }
+
     const cached = this.cache.get(key);
     if (cached) {
       cached.lastUsed = performance.now();
+      this.itemKeys.set(item.id, key);
       return cached;
     }
 
     const entry = this._render(item);
     entry.lastUsed = performance.now();
     this.cache.set(key, entry);
+    this.itemKeys.set(item.id, key);
 
     // Evict old entries if cache is large
     if (this.cache.size > 200) this._evict();
@@ -138,13 +152,16 @@ export class TextRenderer {
     }
   }
 
-  // Invalidate a specific item's cache (call when item text/style changes)
+  // Invalidate a specific item's cached texture immediately
   invalidate(itemId) {
-    for (const [key, entry] of this.cache) {
-      if (key.startsWith(itemId + '|')) {
+    const key = this.itemKeys.get(itemId);
+    if (key) {
+      const entry = this.cache.get(key);
+      if (entry) {
         this.gl.deleteTexture(entry.tex);
         this.cache.delete(key);
       }
+      this.itemKeys.delete(itemId);
     }
   }
 
@@ -153,5 +170,6 @@ export class TextRenderer {
       this.gl.deleteTexture(entry.tex);
     }
     this.cache.clear();
+    this.itemKeys.clear();
   }
 }
