@@ -1,9 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
-import { itemShadowEnabled, applyBg } from '../utils.js';
-import { ConnectorItem } from './ConnectorItem.jsx';
+import { useState, useEffect } from 'react';
 import { ConnectorHandles } from './ConnectorHandles.jsx';
 import { ItemHandles } from './ItemHandles.jsx';
 import { Z } from '../styles.js';
+import { TEXT_PAD_X, TEXT_PAD_Y, TEXT_LINE_HEIGHT, TEXT_DEFAULT_SIZE, FONT } from '../constants.js';
 
 function useNaturalSize(src) {
   const [size, setSize] = useState(null);
@@ -17,100 +16,6 @@ function useNaturalSize(src) {
     return () => { alive = false; };
   }, [src]);
   return size;
-}
-
-function MipmapImage({ item }) {
-  // Start with lowest-res placeholder, upgrade to target when loaded
-  const placeholderSrc = item.placeholderSrc || item.src;
-  const targetSrc = item.targetSrc || item.displaySrc || item.src;
-
-  const [activeSrc, setActiveSrc] = useState(placeholderSrc);
-  const [nextSrc, setNextSrc] = useState(null);
-  const [nextReady, setNextReady] = useState(false);
-
-  // When placeholder changes and we have nothing better, show it immediately
-  useEffect(() => {
-    setActiveSrc(prev => {
-      // Only downgrade to placeholder if current active is the old placeholder or src
-      // (i.e. don't replace a loaded high-res with a placeholder)
-      if (prev === item.src && placeholderSrc !== item.src) return placeholderSrc;
-      return prev;
-    });
-  }, [placeholderSrc, item.src]);
-
-  // Preload the target src; only swap when fully loaded
-  useEffect(() => {
-    if (targetSrc === activeSrc) {
-      setNextSrc(null);
-      setNextReady(false);
-      return;
-    }
-    setNextReady(false);
-    setNextSrc(targetSrc);
-    const img = new window.Image();
-    let alive = true;
-    img.onload = () => {
-      if (alive) setNextReady(true);
-    };
-    img.onerror = () => {
-      // Target failed to load — keep showing whatever we have, don't blank
-      if (alive) { setNextSrc(null); setNextReady(false); }
-    };
-    img.src = targetSrc;
-    return () => { alive = false; };
-  }, [targetSrc, activeSrc]);
-
-  // When the next image is loaded and crossfade finishes, swap it in
-  useEffect(() => {
-    if (!nextReady || !nextSrc) return;
-    const timer = setTimeout(() => {
-      setActiveSrc(nextSrc);
-      setNextSrc(null);
-      setNextReady(false);
-    }, 250); // match the CSS transition duration
-    return () => clearTimeout(timer);
-  }, [nextReady, nextSrc]);
-
-  const baseStyle = {
-    position: 'absolute', top: 0, left: 0,
-    width: '100%', height: '100%',
-    objectFit: 'cover', display: 'block', pointerEvents: 'none',
-    imageRendering: item.pixelated ? 'pixelated' : undefined,
-  };
-
-  return (
-    <>
-      <img src={activeSrc} alt="" draggable={false} style={baseStyle} />
-      {nextSrc && (
-        <img
-          src={nextSrc} alt="" draggable={false}
-          style={{
-            ...baseStyle,
-            opacity: nextReady ? 1 : 0,
-            transition: 'opacity 250ms ease',
-          }}
-        />
-      )}
-    </>
-  );
-}
-
-function VideoItem({ item }) {
-  return (
-    <video
-      src={item.src}
-      autoPlay
-      loop
-      muted
-      playsInline
-      draggable={false}
-      style={{
-        position: 'absolute', top: 0, left: 0,
-        width: '100%', height: '100%',
-        objectFit: 'cover', display: 'block', pointerEvents: 'none',
-      }}
-    />
-  );
 }
 
 function imgFormat(src) {
@@ -159,121 +64,52 @@ function ImageInfoPill({ src, item }) {
 }
 
 
-export function CanvasItem({ item, renderHandles, selectedIds, isAdmin, editingTextId, globalShadow, deleteItems, updateItem, setEditingTextId }) {
+export function CanvasItem({ item, selectedIds, isAdmin, editingTextId, deleteItems, updateItem, setEditingTextId }) {
   const isSel = selectedIds.includes(item.id) && isAdmin;
 
-  if (renderHandles && !isSel) return null;
+  if (!isSel) return null;
 
-  // Connector type — delegate to specialized components
+  // Connector type — delegate to specialized handle component
   if (item.type === "connector") {
-    return renderHandles
-      ? <ConnectorHandles item={item} deleteItems={deleteItems} />
-      : <ConnectorItem item={item} isAdmin={isAdmin} isSel={isSel} />;
+    return <ConnectorHandles item={item} deleteItems={deleteItems} />;
   }
 
-  // Non-connector handles
-  if (renderHandles) {
-    const isEd = editingTextId === item.id && (item.type === "text" || item.type === "link");
-    return (
-      <>
-        {isEd && (() => {
-          const fs = item.fontSize || 24;
-          return (
-            <textarea data-ui autoFocus value={item.text}
-              onFocus={() => { if (item.placeholder) updateItem(item.id, { text: "", placeholder: false }); }}
-              onChange={e => updateItem(item.id, { text: e.target.value })}
-              onBlur={() => setEditingTextId(null)}
-              onPointerDown={e => e.stopPropagation()}
-              onTouchStart={e => e.stopPropagation()}
-              style={{
-                position: "absolute", left: item.x, top: item.y, width: item.w, height: item.h,
-                transform: `rotate(${item.rotation || 0}deg)`, transformOrigin: "center center",
-                resize: "none", border: "none", outline: "none",
-                overflow: "hidden", whiteSpace: "pre-wrap", wordBreak: "break-word",
-                pointerEvents: "auto", touchAction: "auto",
-                // Match WebGL text renderer exactly so text doesn't shift on deselect
-                lineHeight: `${fs * 1.3}px`,
-                padding: "8px 12px", boxSizing: "border-box",
-                // Strip iOS/browser native appearance; bg is transparent — rasterized bg shows through
-                WebkitAppearance: "none", appearance: "none",
-                background: "transparent",
-                color: item.color, WebkitTextFillColor: item.color,
-                fontSize: fs, fontFamily: item.fontFamily || "'DM Sans', sans-serif",
-                fontWeight: item.bold ? "bold" : "normal", fontStyle: item.italic ? "italic" : "normal",
-                textAlign: item.align || "left",
-                zIndex: Z.HANDLE_INFO, // below HANDLE_GRIP so handles stay in front
-              }} />
-          );
-        })()}
-        <ItemHandles item={item} deleteItems={deleteItems} />
-        {(item.type === "image" || item.type === "video") && (
-          <div style={{ position: "absolute", left: item.x, top: item.y, width: item.w, height: item.h, zIndex: Z.HANDLE_INFO, pointerEvents: "none" }}>
-            <ImageInfoPill src={item.src} item={item} />
-          </div>
-        )}
-      </>
-    );
-  }
-
-  // Content rendering
-  const containerStyle = {
-    position: "absolute",
-    left: item.x, top: item.y, width: item.w, height: item.h,
-    zIndex: item.z,
-    cursor: isAdmin ? "move" : (item.type === "link" ? "pointer" : "grab"),
-  };
-
-  const contentStyle = {
-    width: "100%", height: "100%",
-    position: "relative",
-    borderRadius: item.radius ?? 2,
-    boxShadow: globalShadow.enabled && itemShadowEnabled(item)
-      ? `0 ${globalShadow.size}px ${globalShadow.size * 4.67}px rgba(0,0,0,${globalShadow.opacity})`
-      : "none",
-    overflow: "hidden",
-    transform: `rotate(${item.rotation || 0}deg)`,
-    transformOrigin: "center center",
-  };
-
-  let content;
-  if (item.type === "image") {
-    content = <MipmapImage item={item} />;
-  } else if (item.type === "video") {
-    content = <VideoItem item={item} />;
-  } else if (item.type === "text") {
-    const isEd = editingTextId === item.id;
-    content = isEd ? (
-      <textarea data-ui autoFocus value={item.text} onFocus={() => { if (item.placeholder) updateItem(item.id, { text: "", placeholder: false }); }} onChange={e => updateItem(item.id, { text: e.target.value })}
-        onBlur={() => setEditingTextId(null)} onPointerDown={e => e.stopPropagation()}
-        onTouchStart={e => e.stopPropagation()}
-        style={{ width: "100%", height: "100%", resize: "none", border: "none", outline: "none", touchAction: "auto",
-          background: applyBg(item) === "transparent" ? "rgba(194,192,182,0.05)" : applyBg(item),
-          color: item.color, fontSize: item.fontSize, fontFamily: item.fontFamily,
-          fontWeight: item.bold ? "bold" : "normal", fontStyle: item.italic ? "italic" : "normal",
-          textAlign: item.align, padding: "8px 12px", boxSizing: "border-box" }} />
-    ) : (
-      <div onDoubleClick={() => isAdmin && setEditingTextId(item.id)} style={{
-        width: "100%", height: "100%", padding: "8px 12px", boxSizing: "border-box",
-        color: item.color, fontSize: item.fontSize, fontFamily: item.fontFamily,
-        fontWeight: item.bold ? "bold" : "normal", fontStyle: item.italic ? "italic" : "normal",
-        textAlign: item.align, background: applyBg(item), backdropFilter: item.bgBlur ? "blur(8px)" : undefined,
-        whiteSpace: "pre-wrap", wordBreak: "break-word", overflow: "hidden",
-        pointerEvents: isAdmin ? "auto" : "none" }}>{item.text}</div>
-    );
-  } else if (item.type === "link") {
-    content = <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-      background: applyBg(item), backdropFilter: item.bgBlur ? "blur(8px)" : undefined, color: item.color, fontSize: item.fontSize, fontFamily: item.fontFamily,
-      fontWeight: item.bold ? "bold" : "normal", fontStyle: item.italic ? "italic" : "normal",
-      padding: "8px 16px", boxSizing: "border-box", pointerEvents: "none",
-      borderWidth: item.borderWidth || 0, borderStyle: "solid", borderColor: item.borderColor || "transparent" }}>{item.text}</div>;
-  } else if (item.type === "shape") {
-    content = <div style={{ width: "100%", height: "100%", background: applyBg(item), backdropFilter: item.bgBlur ? "blur(8px)" : undefined,
-      borderWidth: item.borderWidth || 0, borderStyle: "solid", borderColor: item.borderColor || "transparent", pointerEvents: "none" }} />;
-  }
+  // Render handles for non-connector items
+  const isEd = editingTextId === item.id && (item.type === "text" || item.type === "link");
+  const fs = item.fontSize || TEXT_DEFAULT_SIZE;
 
   return (
-    <div data-item-id={item.id} style={containerStyle}>
-      <div style={contentStyle}>{content}</div>
-    </div>
+    <>
+      {isEd && (
+        <textarea data-ui autoFocus value={item.text}
+          onFocus={() => { if (item.placeholder) updateItem(item.id, { text: "", placeholder: false }); }}
+          onChange={e => updateItem(item.id, { text: e.target.value })}
+          onBlur={() => setEditingTextId(null)}
+          onPointerDown={e => e.stopPropagation()}
+          onTouchStart={e => e.stopPropagation()}
+          style={{
+            position: "absolute", left: item.x, top: item.y, width: item.w, height: item.h,
+            transform: `rotate(${item.rotation || 0}deg)`, transformOrigin: "center center",
+            resize: "none", border: "none", outline: "none",
+            overflow: "hidden", whiteSpace: "pre-wrap", wordBreak: "break-word",
+            pointerEvents: "auto", touchAction: "auto",
+            lineHeight: `${fs * TEXT_LINE_HEIGHT}px`,
+            padding: `${TEXT_PAD_Y}px ${TEXT_PAD_X}px`, boxSizing: "border-box",
+            WebkitAppearance: "none", appearance: "none",
+            background: "transparent",
+            color: item.color, WebkitTextFillColor: item.color,
+            fontSize: fs, fontFamily: item.fontFamily || FONT,
+            fontWeight: item.bold ? "bold" : "normal", fontStyle: item.italic ? "italic" : "normal",
+            textAlign: item.align || "left",
+            zIndex: Z.HANDLE_INFO,
+          }} />
+      )}
+      <ItemHandles item={item} deleteItems={deleteItems} />
+      {(item.type === "image" || item.type === "video") && (
+        <div style={{ position: "absolute", left: item.x, top: item.y, width: item.w, height: item.h, zIndex: Z.HANDLE_INFO, pointerEvents: "none" }}>
+          <ImageInfoPill src={item.src} item={item} />
+        </div>
+      )}
+    </>
   );
 }

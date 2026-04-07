@@ -2,6 +2,8 @@
 // Only the glyph shape is baked in; color and background are shader uniforms.
 // Caches based on properties that affect glyph shape only.
 
+import { TEXT_PAD_X, TEXT_PAD_Y, TEXT_LINE_HEIGHT, TEXT_DEFAULT_SIZE, FONT } from '../constants.js';
+
 export class TextRenderer {
   constructor(gl) {
     this.gl = gl;
@@ -66,18 +68,17 @@ export class TextRenderer {
     // Render glyph mask only — white text on transparent background.
     // Color and background are applied later as shader uniforms (no rebake needed when they change).
     if (item.text) {
-      const padX = 12, padY = 8;
-      const fontSize = item.fontSize || 24;
-      const fontFamily = item.fontFamily || "'DM Sans', sans-serif";
+      const fontSize = item.fontSize || TEXT_DEFAULT_SIZE;
+      const fontFamily = item.fontFamily || FONT;
 
       ctx.font = `${item.italic ? 'italic' : 'normal'} ${item.bold ? 'bold' : 'normal'} ${fontSize}px ${fontFamily}`;
       ctx.fillStyle = 'white';
       ctx.textBaseline = 'top';
       ctx.textAlign = item.align || 'left';
 
-      const maxWidth = item.w - padX * 2;
+      const maxWidth = item.w - TEXT_PAD_X * 2;
       const lines = this._wrapText(ctx, item.text, maxWidth);
-      const lineHeight = fontSize * 1.3;
+      const lineHeight = fontSize * TEXT_LINE_HEIGHT;
 
       // CSS distributes (lineHeight - fontSize) as half-leading above and below each line.
       // textBaseline='top' sits at the em-square top with no leading, so we must add
@@ -86,10 +87,10 @@ export class TextRenderer {
 
       let x;
       if (item.align === 'center') x = item.w / 2;
-      else if (item.align === 'right') x = item.w - padX;
-      else x = padX;
+      else if (item.align === 'right') x = item.w - TEXT_PAD_X;
+      else x = TEXT_PAD_X;
 
-      let startY = padY + halfLeading;
+      let startY = TEXT_PAD_Y + halfLeading;
       if (item.type === 'link') {
         startY = (item.h - lines.length * lineHeight) / 2 + halfLeading;
       }
@@ -116,36 +117,51 @@ export class TextRenderer {
     return { tex, width: w, height: h };
   }
 
+  // Wrap text to match CSS `white-space: pre-wrap; word-break: break-word; overflow: hidden`.
+  // Key CSS rule: trailing whitespace at end-of-line "hangs" — it does NOT count toward
+  // the line width when deciding whether to wrap. We replicate this by measuring only the
+  // trimmed (no trailing spaces) width against maxWidth.
   _wrapText(ctx, text, maxWidth) {
     const lines = [];
     for (const para of text.split('\n')) {
       if (!para) { lines.push(''); continue; }
-      const words = para.split(/(\s+)/);
-      let currentLine = '';
-      for (const word of words) {
-        const test = currentLine + word;
-        if (ctx.measureText(test).width > maxWidth && currentLine) {
-          lines.push(currentLine);
-          currentLine = word.trimStart();
-        } else {
-          currentLine = test;
+
+      let lineStart = 0;
+      let lastBreakAfter = -1; // index *after* the last break-opportunity char
+
+      for (let i = 0; i < para.length; i++) {
+        const ch = para[i];
+
+        // Spaces and tabs are break opportunities (break is allowed after them)
+        if (ch === ' ' || ch === '\t') {
+          lastBreakAfter = i + 1;
         }
-        // word-break: break-word — if the current segment alone exceeds maxWidth,
-        // split it character by character (matches CSS textarea behaviour)
-        if (ctx.measureText(currentLine).width > maxWidth) {
-          let partial = '';
-          for (const ch of currentLine) {
-            if (ctx.measureText(partial + ch).width > maxWidth && partial) {
-              lines.push(partial);
-              partial = ch;
-            } else {
-              partial += ch;
-            }
+
+        // Measure from lineStart to i+1, trimming trailing whitespace (CSS "hang" rule)
+        const segment = para.slice(lineStart, i + 1);
+        const trimmedWidth = ctx.measureText(segment.trimEnd()).width;
+
+        if (trimmedWidth > maxWidth && i > lineStart) {
+          if (lastBreakAfter > lineStart) {
+            // Wrap at last whitespace break opportunity
+            lines.push(para.slice(lineStart, lastBreakAfter).trimEnd());
+            lineStart = lastBreakAfter;
+            // Skip past any whitespace at start of new line (CSS pre-wrap consumes
+            // the break-space; remaining spaces start the new line)
+          } else {
+            // No break opportunity — break at current char (word-break: break-word)
+            lines.push(para.slice(lineStart, i));
+            lineStart = i;
           }
-          currentLine = partial;
+          lastBreakAfter = -1;
+          // Re-check current char on the new line
+          i = lineStart - 1;
         }
       }
-      if (currentLine) lines.push(currentLine);
+
+      // Push remaining text for this paragraph
+      const remaining = para.slice(lineStart);
+      lines.push(remaining.trimEnd() || remaining);
     }
     return lines.length ? lines : [''];
   }
