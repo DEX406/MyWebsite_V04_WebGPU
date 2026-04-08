@@ -54,6 +54,10 @@ export default function App() {
   const [boxSelect, setBoxSelect] = useState(null);
   const [editingConnector, setEditingConnector] = useState(null);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [propertiesCollapsed, setPropertiesCollapsed] = useState(() => {
+    try { return localStorage.getItem("lutz-properties-collapsed") === "1"; }
+    catch { return false; }
+  });
 
   const fileInputRef = useRef(null);
   const boardFileRef = useRef(null);
@@ -152,6 +156,7 @@ export default function App() {
 
   // ── Persist settings ──
   useEffect(() => { try { localStorage.setItem("lutz-shadow-settings", JSON.stringify(globalShadow)); } catch {} }, [globalShadow]);
+  useEffect(() => { try { localStorage.setItem("lutz-properties-collapsed", propertiesCollapsed ? "1" : "0"); } catch {} }, [propertiesCollapsed]);
   // bgGrid and palette changes trigger a board save (defined after scheduleSave below)
 
   // Close color picker on outside click
@@ -665,7 +670,7 @@ export default function App() {
       </div>
 
       {/* Coordinates display */}
-      <div ref={posDisplayRef} data-ui style={{ position: "absolute", bottom: "calc(16px + env(safe-area-inset-bottom, 0px))", right: "calc(16px + env(safe-area-inset-right, 0px))", zIndex: Z.UI, ...tbSurface, padding: "0 10px", height: 36, ...infoText }}>X 0   Y 0</div>
+      <div ref={posDisplayRef} data-ui style={{ position: "absolute", bottom: "calc(56px + env(safe-area-inset-bottom, 0px))", left: "calc(16px + env(safe-area-inset-left, 0px))", zIndex: Z.UI, ...tbSurface, padding: "0 10px", height: 36, ...infoText }}>X 0   Y 0</div>
 
       {/* Left panel — Copy/Paste/Delete · Undo/Redo · Selection/Group, stacked */}
       {isAdmin && (() => {
@@ -742,7 +747,20 @@ export default function App() {
         </div>
       )}
 
-      <PropertiesPanel isAdmin={isAdmin} selectedIds={selectedIds} items={items} openColorPicker={openColorPicker} updateItems={updateItems} updateItem={updateItem} ungroupSelected={ungroupSelected} resizeImage={resizeImage} setUploadStatus={setUploadStatus} setSettingTeleport={setSettingTeleport} />
+      <PropertiesPanel
+        isAdmin={isAdmin}
+        selectedIds={selectedIds}
+        items={items}
+        openColorPicker={openColorPicker}
+        updateItems={updateItems}
+        updateItem={updateItem}
+        ungroupSelected={ungroupSelected}
+        resizeImage={resizeImage}
+        setUploadStatus={setUploadStatus}
+        setSettingTeleport={setSettingTeleport}
+        collapsed={propertiesCollapsed}
+        setCollapsed={setPropertiesCollapsed}
+      />
 
       <ColorPickerPopup colorPicker={colorPicker} setColorPicker={setColorPicker} palette={palette} />
       <LoginModal showLogin={showLogin} setShowLogin={setShowLogin} password={password} setPassword={setPassword} loginError={loginError} setLoginError={setLoginError} handleLogin={handleLogin} rateLimited={rateLimited} setRateLimited={setRateLimited} />

@@ -154,7 +154,7 @@ function NumPill({ label, value, onChange, min, max, suffix = "" }) {
 /* ═════════════════════════════════════════════
    Main PropertiesPanel
    ═════════════════════════════════════════════ */
-export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, updateItems, updateItem, ungroupSelected, resizeImage, setUploadStatus, setSettingTeleport }) {
+export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, updateItems, updateItem, ungroupSelected, resizeImage, setUploadStatus, setSettingTeleport, collapsed, setCollapsed }) {
   if (!isAdmin || selectedIds.length === 0) return null;
 
   const selectedItems = items.filter(i => selectedIds.includes(i.id));
@@ -163,11 +163,40 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
   const isGroup = gid && selectedItems.every(i => i.groupId === gid);
 
   const panelStyle = {
+    padding: 10, width: 260, fontFamily: FONT, fontSize: 12,
+  };
+  const wrapperStyle = {
     position: "absolute",
     bottom: "calc(16px + env(safe-area-inset-bottom, 0px))",
     right: "calc(16px + env(safe-area-inset-right, 0px))",
-    zIndex: Z.UI, ...panelSurface,
-    padding: 10, width: 260, fontFamily: FONT, fontSize: 12,
+    zIndex: Z.UI,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: 8,
+  };
+  const headerStyle = {
+    ...panelSurface,
+    height: 40,
+    width: 260,
+    padding: "0 12px",
+    display: "flex",
+    alignItems: "center",
+    color: "rgba(194,192,182,0.45)",
+    fontSize: 11,
+    fontWeight: 600,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+    userSelect: "none",
+  };
+  const collapseButtonStyle = {
+    ...tbBtn,
+    width: 40,
+    height: 40,
+    color: "rgba(194,192,182,0.58)",
+    fontSize: 18,
+    lineHeight: 1,
+    flexShrink: 0,
   };
 
   const inp = { background: PILL_BG, border: PILL_BRD, borderRadius: PILL_R, color: "rgba(194,192,182,0.82)", padding: "4px 10px", fontSize: 12, outline: "none", width: "100%", fontFamily: FONT, height: PILL_H, boxSizing: "border-box" };
@@ -176,9 +205,19 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
   if (types.length !== 1) {
     if (!isGroup) return null;
     return (
-      <div data-ui style={panelStyle} onPointerDown={e => e.stopPropagation()}>
-        <div style={sectionTitle}>group · {selectedIds.length} items</div>
-        <Toggle label="Ungroup" active={false} onClick={ungroupSelected} flex />
+      <div data-ui style={wrapperStyle} onPointerDown={e => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button data-ui onClick={() => setCollapsed(!collapsed)} style={collapseButtonStyle} title={collapsed ? "Expand properties" : "Collapse properties"}>
+            {collapsed ? "▾" : "▴"}
+          </button>
+          <div style={headerStyle}>Group Properties</div>
+        </div>
+        {!collapsed && (
+          <div style={panelStyle}>
+            <div style={sectionTitle}>group · {selectedIds.length} items</div>
+            <Toggle label="Ungroup" active={false} onClick={ungroupSelected} flex />
+          </div>
+        )}
       </div>
     );
   }
@@ -191,69 +230,90 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
   /* ── Connector ── */
   if (type === "connector") {
     return (
-      <div data-ui style={panelStyle} onPointerDown={e => e.stopPropagation()}>
-        <div style={{ ...sectionTitle, marginBottom: 4 }}>connector</div>
+      <div data-ui style={wrapperStyle} onPointerDown={e => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button data-ui onClick={() => setCollapsed(!collapsed)} style={collapseButtonStyle} title={collapsed ? "Expand properties" : "Collapse properties"}>
+            {collapsed ? "▾" : "▴"}
+          </button>
+          <div style={headerStyle}>Connector Properties</div>
+        </div>
 
-        <Section title="Line">
-          <div style={{ display: "flex", gap: GAP }}>
-            <ColorPill label="Color" value={sel.lineColor || "#C2C0B6"} onOpen={openColorPicker} onChange={v => updateAll({ lineColor: v })} />
-            <Slider label="Width" value={sel.lineWidth || 2} min={1} max={20} onChange={v => updateAll({ lineWidth: v })} suffix="px" />
-          </div>
-          <div style={{ display: "flex", gap: GAP }}>
-            <Slider label="Elbow" value={sel.roundness ?? 20} min={0} max={80} onChange={v => updateAll({ roundness: v })} />
-            {["h", "v"].map(o => (
-              <Toggle key={o} label={o === "h" ? "H" : "Z"} active={sel.orientation === o} onClick={() => updateAll({ orientation: o })} />
-            ))}
-          </div>
-        </Section>
+        {!collapsed && (
+          <div style={panelStyle}>
+            <div style={{ ...sectionTitle, marginBottom: 4 }}>connector</div>
 
-        <Section title="Endpoints">
-          <div style={{ display: "flex", gap: GAP }}>
-            <Toggle label="Dot 1" active={sel.dot1 !== false} onClick={() => updateAll({ dot1: !sel.dot1 })} flex />
-            <Toggle label="Dot 2" active={sel.dot2 !== false} onClick={() => updateAll({ dot2: !sel.dot2 })} flex />
-          </div>
-          {(sel.dot1 !== false || sel.dot2 !== false) && (
-            <>
+            <Section title="Line">
               <div style={{ display: "flex", gap: GAP }}>
-                <ColorPill label="Color" value={sel.dotColor || "#C2C0B6"} onOpen={openColorPicker} onChange={v => updateAll({ dotColor: v })} />
-                <Slider label="Size" value={sel.dotRadius ?? 5} min={2} max={20} onChange={v => updateAll({ dotRadius: v })} suffix="px" />
+                <ColorPill label="Color" value={sel.lineColor || "#C2C0B6"} onOpen={openColorPicker} onChange={v => updateAll({ lineColor: v })} />
+                <Slider label="Width" value={sel.lineWidth || 2} min={1} max={20} onChange={v => updateAll({ lineWidth: v })} suffix="px" />
               </div>
-            </>
-          )}
-        </Section>
+              <div style={{ display: "flex", gap: GAP }}>
+                <Slider label="Elbow" value={sel.roundness ?? 20} min={0} max={80} onChange={v => updateAll({ roundness: v })} />
+                {["h", "v"].map(o => (
+                  <Toggle key={o} label={o === "h" ? "H" : "Z"} active={sel.orientation === o} onClick={() => updateAll({ orientation: o })} />
+                ))}
+              </div>
+            </Section>
+
+            <Section title="Endpoints">
+              <div style={{ display: "flex", gap: GAP }}>
+                <Toggle label="Dot 1" active={sel.dot1 !== false} onClick={() => updateAll({ dot1: !sel.dot1 })} flex />
+                <Toggle label="Dot 2" active={sel.dot2 !== false} onClick={() => updateAll({ dot2: !sel.dot2 })} flex />
+              </div>
+              {(sel.dot1 !== false || sel.dot2 !== false) && (
+                <>
+                  <div style={{ display: "flex", gap: GAP }}>
+                    <ColorPill label="Color" value={sel.dotColor || "#C2C0B6"} onOpen={openColorPicker} onChange={v => updateAll({ dotColor: v })} />
+                    <Slider label="Size" value={sel.dotRadius ?? 5} min={2} max={20} onChange={v => updateAll({ dotRadius: v })} suffix="px" />
+                  </div>
+                </>
+              )}
+            </Section>
+          </div>
+        )}
       </div>
     );
   }
 
   /* ── Item properties ── */
   return (
-    <div data-ui style={{ ...panelStyle, maxHeight: "70vh", overflowY: "auto" }} onPointerDown={e => e.stopPropagation()}>
-      <div style={{ ...sectionTitle, marginBottom: 4 }}>
-        {type} {isMulti ? `· ${selectedIds.length}` : "properties"}
+    <div data-ui style={wrapperStyle} onPointerDown={e => e.stopPropagation()}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <button data-ui onClick={() => setCollapsed(!collapsed)} style={collapseButtonStyle} title={collapsed ? "Expand properties" : "Collapse properties"}>
+          {collapsed ? "▾" : "▴"}
+        </button>
+        <div style={headerStyle}>
+          {type} {isMulti ? `· ${selectedIds.length}` : "properties"}
+        </div>
       </div>
-
-      {/* ── Size ── */}
-      {!isMulti && (
-        <Section title="Size">
-          <div style={{ display: "flex", gap: GAP }}>
-            <NumPill label="W" value={Math.round(sel.w)} onChange={v => updateAll({ w: v || 30 })} min={1} max={9999} />
-            <NumPill label="H" value={Math.round(sel.h)} onChange={v => updateAll({ h: v || 20 })} min={1} max={9999} />
+      {!collapsed && (
+        <div style={{ ...panelStyle, maxHeight: "70vh", overflowY: "auto" }}>
+          <div style={{ ...sectionTitle, marginBottom: 4 }}>
+            {type} {isMulti ? `· ${selectedIds.length}` : "properties"}
           </div>
-        </Section>
-      )}
 
-      {/* ── Transform ── */}
-      <Section title="Transform">
+          {/* ── Size ── */}
+          {!isMulti && (
+            <Section title="Size">
+              <div style={{ display: "flex", gap: GAP }}>
+                <NumPill label="W" value={Math.round(sel.w)} onChange={v => updateAll({ w: v || 30 })} min={1} max={9999} />
+                <NumPill label="H" value={Math.round(sel.h)} onChange={v => updateAll({ h: v || 20 })} min={1} max={9999} />
+              </div>
+            </Section>
+          )}
+
+          {/* ── Transform ── */}
+          <Section title="Transform">
         <div style={{ display: "flex", gap: GAP }}>
           {!isMulti && (
             <Slider label="Rotate" value={Math.round(sel.rotation || 0)} min={-180} max={180} onChange={v => updateAll({ rotation: v })} suffix="°" />
           )}
           <Slider label="Corners" value={sel.radius ?? 2} min={0} max={100} onChange={v => updateAll({ radius: v })} />
         </div>
-      </Section>
+          </Section>
 
-      {/* ── Appearance ── */}
-      <Section title="Appearance">
+          {/* ── Appearance ── */}
+          <Section title="Appearance">
         <div style={{ display: "flex", gap: GAP }}>
           <Toggle label="Shadow" active={itemShadowEnabled(sel)} onClick={() => updateAll({ shadow: !itemShadowEnabled(sel) })} flex />
           {(type === "image" || type === "video") && (
@@ -285,11 +345,11 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
             <Slider label="W" value={sel.borderWidth || 0} min={0} max={20} onChange={v => updateAll({ borderWidth: v })} suffix="px" />
           </div>
         )}
-      </Section>
+          </Section>
 
-      {/* ── Text ── */}
-      {(type === "text" || type === "link") && (
-        <Section title="Text">
+          {/* ── Text ── */}
+          {(type === "text" || type === "link") && (
+            <Section title="Text">
           <select value={sel.fontFamily} onChange={e => updateAll({ fontFamily: e.target.value })} style={{ ...inp, appearance: "auto", cursor: "pointer" }}>
             {FONTS.map(f => <option key={f.value} value={f.value} style={{ background: "#1F1E1D" }}>{f.label}</option>)}
           </select>
@@ -310,12 +370,12 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
               <input value={sel.url} onChange={e => updateItem(sel.id, { url: e.target.value })} style={inp} placeholder="https://..." />
             </>
           )}
-        </Section>
-      )}
+            </Section>
+          )}
 
-      {/* ── Teleport ── */}
-      {!isMulti && type === "link" && (
-        <Section title="Teleport">
+          {/* ── Teleport ── */}
+          {!isMulti && type === "link" && (
+            <Section title="Teleport">
           <div style={{ display: "flex", gap: GAP }}>
             {sel.teleportPan
               ? <>
@@ -325,12 +385,12 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
               : <Toggle label="Set destination" active={false} onClick={() => setSettingTeleport(sel.id)} flex />
             }
           </div>
-        </Section>
-      )}
+            </Section>
+          )}
 
-      {/* ── Export (image/video) ── */}
-      {(type === "image" || type === "video") && (
-        <Section title="Export">
+          {/* ── Export (image/video) ── */}
+          {(type === "image" || type === "video") && (
+            <Section title="Export">
           {type === "image" && (
             <div style={{ display: "flex", gap: GAP }}>
               {!isMulti && sel.src.startsWith("http") && !sel.src.includes("r2.dev") ? (
@@ -442,7 +502,9 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
           >
             {isMulti ? `Save ${selectedItems.length} to device` : "Save to device"}
           </button>
-        </Section>
+            </Section>
+          )}
+        </div>
       )}
     </div>
   );
