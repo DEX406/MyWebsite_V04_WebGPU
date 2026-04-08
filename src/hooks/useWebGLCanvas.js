@@ -4,6 +4,7 @@
 import { useRef, useCallback, useEffect } from 'react';
 import { GLRenderer } from '../webgl/GLRenderer.js';
 import { hitTest } from '../webgl/hitTest.js';
+import { GOOGLE_FONT_STYLESHEETS } from '../fontLibrary.js';
 
 function getCanvasSize(canvas) {
   const rect = canvas?.getBoundingClientRect?.();
@@ -52,6 +53,7 @@ export function useWebGLCanvas() {
       width,
       height,
       dpr: window.devicePixelRatio || 1,
+      fontStylesheets: GOOGLE_FONT_STYLESHEETS,
     }, [offscreen]);
     workerRef.current = worker;
   }, []);

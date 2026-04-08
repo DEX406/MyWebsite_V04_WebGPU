@@ -4,6 +4,41 @@ let renderer = null;
 let pendingData = null;
 let rafId = 0;
 
+function firstMatch(text, regex, fallback = '') {
+  const m = text.match(regex);
+  return m?.[1] ?? fallback;
+}
+
+async function loadWorkerFonts(stylesheets = []) {
+  if (typeof self.fonts === 'undefined' || typeof FontFace === 'undefined') return;
+  const loaded = new Set();
+
+  for (const sheetUrl of stylesheets) {
+    try {
+      const css = await fetch(sheetUrl).then(r => r.text());
+      const blocks = css.match(/@font-face\s*{[^}]+}/g) || [];
+      for (const block of blocks) {
+        const family = firstMatch(block, /font-family:\s*['"]?([^;'"]+)['"]?\s*;/, '');
+        const rawUrl = firstMatch(block, /url\(([^)]+)\)/, '').trim().replace(/^['"]|['"]$/g, '');
+        if (!family || !rawUrl) continue;
+        const source = rawUrl.startsWith('http') ? rawUrl : new URL(rawUrl, sheetUrl).href;
+        const style = firstMatch(block, /font-style:\s*([^;]+);/, 'normal').trim();
+        const weight = firstMatch(block, /font-weight:\s*([^;]+);/, '400').trim();
+        const key = `${family}|${style}|${weight}|${source}`;
+        if (loaded.has(key)) continue;
+        loaded.add(key);
+        const face = new FontFace(family, `url(${source})`, { style, weight });
+        await face.load();
+        self.fonts.add(face);
+      }
+    } catch {
+      // best effort only
+    }
+  }
+
+  await self.fonts.ready;
+}
+
 function scheduleRender() {
   if (rafId) return;
   rafId = self.requestAnimationFrame(() => {
@@ -18,13 +53,18 @@ self.onmessage = (event) => {
   if (!msg || !msg.type) return;
 
   if (msg.type === 'init') {
-    const { canvas, width, height, dpr } = msg;
+    const { canvas, width, height, dpr, fontStylesheets } = msg;
     renderer = new GLRenderer(canvas, {
       isOffscreen: true,
       initialWidth: width,
       initialHeight: height,
       initialDpr: dpr,
       onNeedsRedraw: () => scheduleRender(),
+    });
+    loadWorkerFonts(fontStylesheets).then(() => {
+      if (!renderer) return;
+      renderer.textRenderer.invalidateAll();
+      if (pendingData) scheduleRender();
     });
     return;
   }
