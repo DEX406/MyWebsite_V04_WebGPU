@@ -2,6 +2,7 @@ import { useRef, useCallback } from 'react';
 import { FONT, FONTS } from '../constants.js';
 import { itemShadowEnabled } from '../utils.js';
 import { uploadImage, serverResize, downloadImageViaProxy } from '../api.js';
+import { ChevronUpIcon, ChevronDownIcon } from '../icons.jsx';
 import { togBtn, panelSurface, tbBtn, Z } from '../styles.js';
 
 /* ─────────────────────────────────────────────
@@ -191,12 +192,22 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
   };
   const collapseButtonStyle = {
     ...tbBtn,
+    width: 32,
+    height: 32,
+    flexShrink: 0,
+  };
+  const collapseBoxStyle = {
+    ...panelSurface,
     width: 40,
     height: 40,
-    color: "rgba(194,192,182,0.58)",
-    fontSize: 18,
-    lineHeight: 1,
-    flexShrink: 0,
+    padding: 2,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  };
+  const contentBoxStyle = {
+    ...panelSurface,
+    ...panelStyle,
   };
 
   const inp = { background: PILL_BG, border: PILL_BRD, borderRadius: PILL_R, color: "rgba(194,192,182,0.82)", padding: "4px 10px", fontSize: 12, outline: "none", width: "100%", fontFamily: FONT, height: PILL_H, boxSizing: "border-box" };
@@ -207,13 +218,15 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
     return (
       <div data-ui style={wrapperStyle} onPointerDown={e => e.stopPropagation()}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button data-ui onClick={() => setCollapsed(!collapsed)} style={collapseButtonStyle} title={collapsed ? "Expand properties" : "Collapse properties"}>
-            {collapsed ? "▾" : "▴"}
-          </button>
+          <div style={collapseBoxStyle}>
+            <button data-ui onClick={() => setCollapsed(!collapsed)} style={{ ...collapseButtonStyle, color: collapsed ? "#FE8181" : "#65BB30" }} title={collapsed ? "Expand properties" : "Collapse properties"}>
+              {collapsed ? <ChevronDownIcon size={18} /> : <ChevronUpIcon size={18} />}
+            </button>
+          </div>
           <div style={headerStyle}>Group Properties</div>
         </div>
         {!collapsed && (
-          <div style={panelStyle}>
+          <div style={contentBoxStyle}>
             <div style={sectionTitle}>group · {selectedIds.length} items</div>
             <Toggle label="Ungroup" active={false} onClick={ungroupSelected} flex />
           </div>
@@ -232,14 +245,16 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
     return (
       <div data-ui style={wrapperStyle} onPointerDown={e => e.stopPropagation()}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button data-ui onClick={() => setCollapsed(!collapsed)} style={collapseButtonStyle} title={collapsed ? "Expand properties" : "Collapse properties"}>
-            {collapsed ? "▾" : "▴"}
-          </button>
+          <div style={collapseBoxStyle}>
+            <button data-ui onClick={() => setCollapsed(!collapsed)} style={{ ...collapseButtonStyle, color: collapsed ? "#FE8181" : "#65BB30" }} title={collapsed ? "Expand properties" : "Collapse properties"}>
+              {collapsed ? <ChevronDownIcon size={18} /> : <ChevronUpIcon size={18} />}
+            </button>
+          </div>
           <div style={headerStyle}>Connector Properties</div>
         </div>
 
         {!collapsed && (
-          <div style={panelStyle}>
+          <div style={contentBoxStyle}>
             <div style={{ ...sectionTitle, marginBottom: 4 }}>connector</div>
 
             <Section title="Line">
@@ -279,15 +294,17 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
   return (
     <div data-ui style={wrapperStyle} onPointerDown={e => e.stopPropagation()}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <button data-ui onClick={() => setCollapsed(!collapsed)} style={collapseButtonStyle} title={collapsed ? "Expand properties" : "Collapse properties"}>
-          {collapsed ? "▾" : "▴"}
-        </button>
+        <div style={collapseBoxStyle}>
+          <button data-ui onClick={() => setCollapsed(!collapsed)} style={{ ...collapseButtonStyle, color: collapsed ? "#FE8181" : "#65BB30" }} title={collapsed ? "Expand properties" : "Collapse properties"}>
+            {collapsed ? <ChevronDownIcon size={18} /> : <ChevronUpIcon size={18} />}
+          </button>
+        </div>
         <div style={headerStyle}>
           {type} {isMulti ? `· ${selectedIds.length}` : "properties"}
         </div>
       </div>
       {!collapsed && (
-        <div style={{ ...panelStyle, maxHeight: "70vh", overflowY: "auto" }}>
+        <div style={{ ...contentBoxStyle, maxHeight: "70vh", overflowY: "auto" }}>
           <div style={{ ...sectionTitle, marginBottom: 4 }}>
             {type} {isMulti ? `· ${selectedIds.length}` : "properties"}
           </div>

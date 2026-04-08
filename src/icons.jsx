@@ -141,6 +141,14 @@ export const RedoIcon = (p) => (
   <I {...p}><path d="M16 8l-4-4M16 8l-4 4M16 8H7a5 5 0 0 0 0 10h1" /></I>
 );
 
+export const ChevronUpIcon = (p) => (
+  <I {...p}><path d="M4 12l6-6 6 6" /></I>
+);
+
+export const ChevronDownIcon = (p) => (
+  <I {...p}><path d="M4 8l6 6 6-6" /></I>
+);
+
 export const HomeIcon = (p) => (
   <I {...p}><path d="M3 10l7-7 7 7M5 9v7a1 1 0 001 1h3v-4h2v4h3a1 1 0 001-1V9" /></I>
 );
