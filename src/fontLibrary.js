@@ -4,6 +4,7 @@
 export const GOOGLE_FONT_STYLESHEETS = [
   'https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,100..1000&display=swap',
   'https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&display=swap',
+  'https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap',
   'https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap',
   'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap',
 ];
@@ -11,6 +12,7 @@ export const GOOGLE_FONT_STYLESHEETS = [
 export const CUSTOM_FONTS = [
   { label: 'DM Sans', value: "'DM Sans', sans-serif" },
   { label: 'Inter', value: "'Inter', sans-serif" },
+  { label: 'IBM Plex Sans', value: "'IBM Plex Sans', sans-serif" },
   { label: 'Outfit', value: "'Outfit', sans-serif" },
   { label: 'Space Grotesk', value: "'Space Grotesk', sans-serif" },
 ];
