@@ -145,7 +145,7 @@ export default function App() {
         vp.zoomRef.current = 1;
       }
       setItems(migrated);
-      webgl.rendererRef.current?.textRenderer.invalidateAll();
+      webgl.invalidateAllText();
       setLoading(false);
     });
   }, []);

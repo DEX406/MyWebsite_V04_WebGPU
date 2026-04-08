@@ -5,12 +5,19 @@
 import { TEXT_PAD_X, TEXT_PAD_Y, TEXT_LINE_HEIGHT, TEXT_DEFAULT_SIZE, FONT } from '../constants.js';
 
 export class TextRenderer {
-  constructor(gl) {
+  constructor(gl, opts = {}) {
     this.gl = gl;
+    this.devicePixelRatio = opts.devicePixelRatio || 1;
     this.cache = new Map();    // key → { tex, width, height, lastUsed }
     this.itemKeys = new Map(); // itemId → current cache key (1 live texture per item)
-    this.canvas = document.createElement('canvas');
+    this.canvas = typeof OffscreenCanvas !== 'undefined'
+      ? new OffscreenCanvas(1, 1)
+      : document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d');
+  }
+
+  setDevicePixelRatio(dpr) {
+    this.devicePixelRatio = dpr || 1;
   }
 
   // Cache key covers only what affects glyph shape.
@@ -54,7 +61,7 @@ export class TextRenderer {
 
   _render(item) {
     const gl = this.gl;
-    const scale = 4 + (window.devicePixelRatio || 1);
+    const scale = 4 + this.devicePixelRatio;
     const w = Math.ceil(item.w * scale);
     const h = Math.ceil(item.h * scale);
 

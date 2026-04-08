@@ -56,8 +56,12 @@ function getUniforms(gl, prog, names) {
 const SUPERSAMPLE = 2; // 2x supersampling multiplier on top of DPR
 
 export class GLRenderer {
-  constructor(canvas) {
+  constructor(canvas, opts = {}) {
     this.canvas = canvas;
+    this.isOffscreen = !!opts.isOffscreen;
+    this.viewportWidth = opts.initialWidth || 1;
+    this.viewportHeight = opts.initialHeight || 1;
+    this.devicePixelRatio = opts.initialDpr || 1;
     const gl = canvas.getContext('webgl2', {
       alpha: false,
       antialias: false,
@@ -67,11 +71,11 @@ export class GLRenderer {
     if (!gl) throw new Error('WebGL2 not supported');
     this.gl = gl;
 
-    this._onNeedsRedraw = null; // set by consumer to trigger repaint on async texture load
+    this._onNeedsRedraw = opts.onNeedsRedraw || null; // set by consumer to trigger repaint on async texture load
     this.texCache = new TextureCache(gl, () => {
       if (this._onNeedsRedraw) this._onNeedsRedraw();
-    });
-    this.textRenderer = new TextRenderer(gl);
+    }, { isOffscreen: this.isOffscreen });
+    this.textRenderer = new TextRenderer(gl, { devicePixelRatio: this.devicePixelRatio });
 
     this._initPrograms();
     this._initGeometry();
@@ -165,16 +169,30 @@ export class GLRenderer {
     gl.bindVertexArray(null);
   }
 
+  setViewport(width, height, dpr = 1) {
+    this.viewportWidth = Math.max(1, Math.round(width || 1));
+    this.viewportHeight = Math.max(1, Math.round(height || 1));
+    this.devicePixelRatio = Math.max(1, dpr || 1);
+    this.textRenderer.setDevicePixelRatio(this.devicePixelRatio);
+  }
+
   // Resize canvas to match display size × DPR × supersample
   resize() {
-    const dpr = (window.devicePixelRatio || 1) * SUPERSAMPLE;
+    const dpr = this.devicePixelRatio * SUPERSAMPLE;
     const canvas = this.canvas;
-    const parent = canvas.parentElement;
-    if (!parent) return;
-    const w = parent.clientWidth;
-    const h = parent.clientHeight;
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
+    let w = this.viewportWidth;
+    let h = this.viewportHeight;
+    if (!this.isOffscreen) {
+      const parent = canvas.parentElement;
+      if (!parent) return;
+      w = parent.clientWidth;
+      h = parent.clientHeight;
+      this.viewportWidth = w;
+      this.viewportHeight = h;
+      this.devicePixelRatio = window.devicePixelRatio || 1;
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+    }
     const pw = Math.round(w * dpr);
     const ph = Math.round(h * dpr);
     if (canvas.width !== pw || canvas.height !== ph) {
@@ -186,7 +204,7 @@ export class GLRenderer {
   // Main render call
   render({ items, panX, panY, zoom, bgGrid, globalShadow, selectedIds, editingTextId }) {
     const gl = this.gl;
-    const dpr = (window.devicePixelRatio || 1) * SUPERSAMPLE;
+    const dpr = this.devicePixelRatio * SUPERSAMPLE;
 
     this.resize();
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
