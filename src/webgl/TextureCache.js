@@ -3,6 +3,8 @@
 
 const MAX_TEXTURES = 200; // max cached textures before eviction kicks in
 const GLOBAL_IMAGE_UPLOAD_DELAY_MS = 500; // temporary debug delay for CPU->GPU image upload
+const MAX_CONCURRENT_IMAGE_REQUESTS = 2; // throttle request fan-out
+const IMAGE_REQUEST_SPACING_MS = 120; // stagger request starts
 
 export class TextureCache {
   constructor(gl, onTextureReady) {
@@ -10,6 +12,8 @@ export class TextureCache {
     this.cache = new Map(); // url → { tex, width, height, ready, isPlaceholder, insertOrder }
     this.videos = new Map(); // itemId → { video, tex, needsUpdate }
     this.loading = new Set(); // urls currently loading
+    this.pendingLoads = new Map(); // url -> { pixelated, isPlaceholder }
+    this.loadPumpTimer = null;
     this.insertCounter = 0; // monotonic counter for FIFO ordering
     this._onTextureReady = onTextureReady || null; // callback when any texture finishes loading
     // 1x1 transparent fallback texture (used while images load)
@@ -68,37 +72,71 @@ export class TextureCache {
     const cached = this.cache.get(url);
     if (cached) return cached;
 
-    // Start loading
-    if (!this.loading.has(url)) {
-      this.loading.add(url);
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        setTimeout(() => {
-          this.loading.delete(url);
-          const gl = this.gl;
-          const tex = gl.createTexture();
-          gl.bindTexture(gl.TEXTURE_2D, tex);
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-          this.cache.set(url, {
-            tex, width: img.naturalWidth, height: img.naturalHeight,
-            ready: true, isPlaceholder, insertOrder: this.insertCounter++,
-          });
-          this._evict();
-          if (this._onTextureReady) this._onTextureReady();
-        }, GLOBAL_IMAGE_UPLOAD_DELAY_MS);
-      };
-      img.onerror = () => {
-        this.loading.delete(url);
-      };
-      img.src = url;
-    }
+    this._enqueueLoad(url, pixelated, isPlaceholder);
 
     return this.fallback;
+  }
+
+  _enqueueLoad(url, pixelated, isPlaceholder) {
+    if (!url || this.cache.has(url) || this.loading.has(url) || this.pendingLoads.has(url)) return;
+    this.pendingLoads.set(url, { pixelated, isPlaceholder });
+    this._scheduleLoadPump();
+  }
+
+  _scheduleLoadPump() {
+    if (this.loadPumpTimer) return;
+    this.loadPumpTimer = setTimeout(() => {
+      this.loadPumpTimer = null;
+      this._pumpLoads();
+    }, IMAGE_REQUEST_SPACING_MS);
+  }
+
+  _pumpLoads() {
+    if (this.loading.size >= MAX_CONCURRENT_IMAGE_REQUESTS) {
+      this._scheduleLoadPump();
+      return;
+    }
+
+    for (const [url, req] of this.pendingLoads) {
+      this.pendingLoads.delete(url);
+      this._startLoad(url, req.pixelated, req.isPlaceholder);
+      break; // one request start per pump tick
+    }
+
+    if (this.pendingLoads.size > 0) this._scheduleLoadPump();
+  }
+
+  _startLoad(url, pixelated, isPlaceholder) {
+    if (!url || this.cache.has(url) || this.loading.has(url)) return;
+    this.loading.add(url);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      setTimeout(() => {
+        this.loading.delete(url);
+        const gl = this.gl;
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+        const filter = pixelated ? gl.NEAREST : gl.LINEAR;
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        this.cache.set(url, {
+          tex, width: img.naturalWidth, height: img.naturalHeight,
+          ready: true, isPlaceholder, insertOrder: this.insertCounter++,
+        });
+        this._evict();
+        if (this._onTextureReady) this._onTextureReady();
+        this._pumpLoads();
+      }, GLOBAL_IMAGE_UPLOAD_DELAY_MS);
+    };
+    img.onerror = () => {
+      this.loading.delete(url);
+      this._pumpLoads();
+    };
+    img.src = url;
   }
 
   // Get the best available texture from a prioritized list of URLs (best-to-worst).
@@ -230,5 +268,7 @@ export class TextureCache {
     gl.deleteTexture(this.transparent.tex);
     this.cache.clear();
     this.videos.clear();
+    this.pendingLoads.clear();
+    if (this.loadPumpTimer) clearTimeout(this.loadPumpTimer);
   }
 }
