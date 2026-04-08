@@ -11,87 +11,10 @@ export class TextureCache {
     this.loading = new Set(); // urls currently loading
     this.insertCounter = 0; // monotonic counter for FIFO ordering
     this._onTextureReady = onTextureReady || null; // callback when any texture finishes loading
-    this.isInteracting = false;
-    this.requestEpoch = 0;
-    this.deferredLoads = new Map(); // url -> { pixelated, isPlaceholder, epoch }
-    this.deferTimer = 0;
-    this.maxConcurrentLoads = 2;
     // 1x1 transparent fallback texture (used while images load)
     this.fallback = this._create1x1([0, 0, 0, 0]);
     // 1x1 transparent fallback
     this.transparent = this._create1x1([0, 0, 0, 0]);
-  }
-
-  setInteractionState(interacting) {
-    if (interacting && !this.isInteracting) {
-      // User started moving camera — drop queued requests so they don't pile up.
-      this.requestEpoch += 1;
-      this.deferredLoads.clear();
-      if (this.deferTimer) {
-        clearTimeout(this.deferTimer);
-        this.deferTimer = 0;
-      }
-    }
-    this.isInteracting = interacting;
-    if (!interacting) this._scheduleDeferredPump();
-  }
-
-  _scheduleDeferredPump() {
-    if (this.deferTimer || this.isInteracting || this.deferredLoads.size === 0) return;
-    this.deferTimer = setTimeout(() => {
-      this.deferTimer = 0;
-      this._pumpDeferredLoads();
-    }, 40);
-  }
-
-  _pumpDeferredLoads() {
-    if (this.isInteracting || this.deferredLoads.size === 0) return;
-    const remainingSlots = Math.max(0, this.maxConcurrentLoads - this.loading.size);
-    if (!remainingSlots) {
-      this._scheduleDeferredPump();
-      return;
-    }
-
-    let started = 0;
-    for (const [url, req] of this.deferredLoads) {
-      this.deferredLoads.delete(url);
-      if (req.epoch !== this.requestEpoch) continue; // stale view request
-      this._startLoad(url, req.pixelated, req.isPlaceholder);
-      started += 1;
-      if (started >= remainingSlots) break;
-    }
-    if (this.deferredLoads.size > 0) this._scheduleDeferredPump();
-  }
-
-  _startLoad(url, pixelated = false, isPlaceholder = false) {
-    if (!url || this.cache.has(url) || this.loading.has(url)) return;
-    this.loading.add(url);
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      this.loading.delete(url);
-      const gl = this.gl;
-      const tex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-      const filter = pixelated ? gl.NEAREST : gl.LINEAR;
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      this.cache.set(url, {
-        tex, width: img.naturalWidth, height: img.naturalHeight,
-        ready: true, isPlaceholder, insertOrder: this.insertCounter++,
-      });
-      this._evict();
-      if (this._onTextureReady) this._onTextureReady();
-      this._scheduleDeferredPump();
-    };
-    img.onerror = () => {
-      this.loading.delete(url);
-      this._scheduleDeferredPump();
-    };
-    img.src = url;
   }
 
   _create1x1(rgba) {
@@ -144,12 +67,33 @@ export class TextureCache {
     const cached = this.cache.get(url);
     if (cached) return cached;
 
-    // During camera interaction we defer and coalesce image loads.
-    if (this.isInteracting) {
-      this.deferredLoads.set(url, { pixelated, isPlaceholder, epoch: this.requestEpoch });
-      return this.fallback;
+    // Start loading
+    if (!this.loading.has(url)) {
+      this.loading.add(url);
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        this.loading.delete(url);
+        const gl = this.gl;
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        this.cache.set(url, {
+          tex, width: img.naturalWidth, height: img.naturalHeight,
+          ready: true, isPlaceholder, insertOrder: this.insertCounter++,
+        });
+        this._evict();
+        if (this._onTextureReady) this._onTextureReady();
+      };
+      img.onerror = () => {
+        this.loading.delete(url);
+      };
+      img.src = url;
     }
-    this._startLoad(url, pixelated, isPlaceholder);
 
     return this.fallback;
   }
@@ -283,7 +227,5 @@ export class TextureCache {
     gl.deleteTexture(this.transparent.tex);
     this.cache.clear();
     this.videos.clear();
-    this.deferredLoads.clear();
-    if (this.deferTimer) clearTimeout(this.deferTimer);
   }
 }

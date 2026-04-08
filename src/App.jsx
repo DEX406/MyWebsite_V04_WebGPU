@@ -89,7 +89,6 @@ export default function App() {
         panX: vp.panRef.current.x,
         panY: vp.panRef.current.y,
         zoom: vp.zoomRef.current,
-        isInteracting: vp.interactingRef.current,
         bgGrid: bgGridRef.current,
         globalShadow: globalShadowRef.current,
         selectedIds: selectedIdsRef.current,

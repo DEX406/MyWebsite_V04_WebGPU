@@ -18,52 +18,13 @@ export function useMipmap(items, updateItem, vp) {
   const [settled, setSettled] = useState(0); // increments on each settle
   const itemsRef = useRef(items);
   itemsRef.current = items;
-  const pendingQueueRef = useRef(new Map()); // src -> { itemId, epoch }
-  const queueEpochRef = useRef(0);
-  const queueTimerRef = useRef(null);
+  const displayDelayTimerRef = useRef(null);
 
   // Wire up the settled callback from useViewport
   useEffect(() => {
     vp.onSettledRef.current = () => setSettled(c => c + 1);
     return () => { vp.onSettledRef.current = null; };
   }, [vp.onSettledRef]);
-
-  const scheduleQueuePump = useCallback(() => {
-    if (queueTimerRef.current) return;
-    queueTimerRef.current = setTimeout(() => {
-      queueTimerRef.current = null;
-      pumpQueue();
-    }, 120);
-  }, []);
-
-  const pumpQueue = useCallback(() => {
-    if (vp.interactingRef.current) return;
-    if (pendingQueueRef.current.size === 0) return;
-
-    for (const [src, req] of pendingQueueRef.current) {
-      pendingQueueRef.current.delete(src);
-      if (req.epoch !== queueEpochRef.current) continue;
-      if (pendingGenerations.has(src)) continue;
-      pendingGenerations.add(src);
-      generateMipmaps(src).then(result => {
-        pendingGenerations.delete(src);
-        if (result && (result.srcQ50 || result.srcQ25 || result.srcQ12 || result.srcQ6)) {
-          updateItem(req.itemId, {
-            srcQ50: result.srcQ50 || null,
-            srcQ25: result.srcQ25 || null,
-            srcQ12: result.srcQ12 || null,
-            srcQ6: result.srcQ6 || null,
-          });
-        }
-        scheduleQueuePump();
-      }).catch(() => {
-        pendingGenerations.delete(src);
-        scheduleQueuePump();
-      });
-      break; // one generation per tick to offset load-in spikes
-    }
-    if (pendingQueueRef.current.size > 0) scheduleQueuePump();
-  }, [updateItem, vp.interactingRef, scheduleQueuePump]);
 
   // Trigger mipmap generation for images missing variants
   useEffect(() => {
@@ -85,28 +46,22 @@ export function useMipmap(items, updateItem, vp) {
     const r2Images = eligible.filter(i => i.src.includes('r2.dev'));
 
     for (const item of r2Images) {
-      pendingQueueRef.current.set(item.src, { itemId: item.id, epoch: queueEpochRef.current });
+      pendingGenerations.add(item.src);
+      generateMipmaps(item.src).then(result => {
+        pendingGenerations.delete(item.src);
+        if (result && (result.srcQ50 || result.srcQ25 || result.srcQ12 || result.srcQ6)) {
+          updateItem(item.id, {
+            srcQ50: result.srcQ50 || null,
+            srcQ25: result.srcQ25 || null,
+            srcQ12: result.srcQ12 || null,
+            srcQ6: result.srcQ6 || null,
+          });
+        }
+      }).catch(() => {
+        pendingGenerations.delete(item.src);
+      });
     }
-    scheduleQueuePump();
-  }, [items, vp.interactingRef, scheduleQueuePump]);
-
-  // Cancel queued mipmap starts when movement resumes; restart once settled
-  useEffect(() => {
-    if (vp.interactingRef.current) {
-      queueEpochRef.current += 1;
-      pendingQueueRef.current.clear();
-      if (queueTimerRef.current) {
-        clearTimeout(queueTimerRef.current);
-        queueTimerRef.current = null;
-      }
-      return;
-    }
-    scheduleQueuePump();
-  }, [settled, items.length, vp.interactingRef, scheduleQueuePump]);
-
-  useEffect(() => () => {
-    if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
-  }, []);
+  }, [items, updateItem]);
 
   // Compute display sources for all image items whenever viewport settles
   const computeDisplaySources = useCallback(() => {
@@ -133,20 +88,32 @@ export function useMipmap(items, updateItem, vp) {
     }
   }, [vp, updateItem]);
 
+  const scheduleDisplaySources = useCallback((delay = 120) => {
+    if (displayDelayTimerRef.current) clearTimeout(displayDelayTimerRef.current);
+    displayDelayTimerRef.current = setTimeout(() => {
+      displayDelayTimerRef.current = null;
+      computeDisplaySources();
+    }, delay);
+  }, [computeDisplaySources]);
+
   // Re-evaluate on every settle event
   useEffect(() => {
-    if (settled > 0) computeDisplaySources();
-  }, [settled, computeDisplaySources]);
+    if (settled > 0) scheduleDisplaySources();
+  }, [settled, scheduleDisplaySources]);
 
   // Also evaluate once when mipmaps become available
   const prevMipmapCountRef = useRef(0);
   useEffect(() => {
     const count = items.filter(i => i.srcQ50 || i.srcQ25 || i.srcQ12 || i.srcQ6).length;
     if (count > prevMipmapCountRef.current) {
-      computeDisplaySources();
+      scheduleDisplaySources();
     }
     prevMipmapCountRef.current = count;
-  }, [items, computeDisplaySources]);
+  }, [items, scheduleDisplaySources]);
+
+  useEffect(() => () => {
+    if (displayDelayTimerRef.current) clearTimeout(displayDelayTimerRef.current);
+  }, []);
 }
 
 function itemIsOnscreen(item, bounds) {

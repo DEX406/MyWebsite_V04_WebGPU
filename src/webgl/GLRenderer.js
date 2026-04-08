@@ -71,9 +71,7 @@ export class GLRenderer {
     this.texCache = new TextureCache(gl, () => {
       if (this._onNeedsRedraw) this._onNeedsRedraw();
     });
-    this.textRenderer = new TextRenderer(gl, () => {
-      if (this._onNeedsRedraw) this._onNeedsRedraw();
-    });
+    this.textRenderer = new TextRenderer(gl);
 
     this._initPrograms();
     this._initGeometry();
@@ -186,11 +184,9 @@ export class GLRenderer {
   }
 
   // Main render call
-  render({ items, panX, panY, zoom, isInteracting = false, bgGrid, globalShadow, selectedIds, editingTextId }) {
+  render({ items, panX, panY, zoom, bgGrid, globalShadow, selectedIds, editingTextId }) {
     const gl = this.gl;
     const dpr = (window.devicePixelRatio || 1) * SUPERSAMPLE;
-    this.texCache.setInteractionState(isInteracting);
-    this.textRenderer.setInteractionState(isInteracting);
 
     this.resize();
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
