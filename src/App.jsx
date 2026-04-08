@@ -670,7 +670,9 @@ export default function App() {
       </div>
 
       {/* Coordinates display */}
-      <div ref={posDisplayRef} data-ui style={{ position: "absolute", bottom: "calc(56px + env(safe-area-inset-bottom, 0px))", left: "calc(16px + env(safe-area-inset-left, 0px))", zIndex: Z.UI, ...tbSurface, padding: "2px 10px", minHeight: 36, ...infoText }}>X 0   Y 0</div>
+      <div data-ui style={{ position: "absolute", bottom: "calc(56px + env(safe-area-inset-bottom, 0px))", left: "calc(16px + env(safe-area-inset-left, 0px))", zIndex: Z.UI, ...tbSurface }}>
+        <div ref={posDisplayRef} style={{ ...tbBtn, width: "auto", padding: "0 10px", cursor: "default", ...infoText }}>X 0   Y 0</div>
+      </div>
 
       {/* Left panel — Copy/Paste/Delete · Undo/Redo · Selection/Group, stacked */}
       {isAdmin && (() => {
