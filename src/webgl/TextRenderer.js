@@ -5,12 +5,71 @@
 import { TEXT_PAD_X, TEXT_PAD_Y, TEXT_LINE_HEIGHT, TEXT_DEFAULT_SIZE, FONT } from '../constants.js';
 
 export class TextRenderer {
-  constructor(gl) {
+  constructor(gl, onTextureReady) {
     this.gl = gl;
     this.cache = new Map();    // key → { tex, width, height, lastUsed }
     this.itemKeys = new Map(); // itemId → current cache key (1 live texture per item)
+    this.pending = new Map();  // itemId → { item, key, epoch }
+    this.isInteracting = false;
+    this.requestEpoch = 0;
+    this._raf = 0;
+    this._onTextureReady = onTextureReady || null;
+    this.maxBuildsPerFrame = 2;
     this.canvas = document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d');
+    this.transparent = this._createTransparentTexture();
+  }
+
+  _createTransparentTexture() {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return { tex, width: 1, height: 1 };
+  }
+
+  setInteractionState(interacting) {
+    if (interacting && !this.isInteracting) {
+      this.requestEpoch += 1;
+      this.pending.clear();
+      if (this._raf) {
+        cancelAnimationFrame(this._raf);
+        this._raf = 0;
+      }
+    }
+    this.isInteracting = interacting;
+    if (!interacting) this._scheduleBuild();
+  }
+
+  _scheduleBuild() {
+    if (this._raf || this.isInteracting || this.pending.size === 0) return;
+    this._raf = requestAnimationFrame(() => {
+      this._raf = 0;
+      this._pumpBuildQueue();
+    });
+  }
+
+  _pumpBuildQueue() {
+    if (this.isInteracting || this.pending.size === 0) return;
+    let built = 0;
+    for (const [itemId, req] of this.pending) {
+      this.pending.delete(itemId);
+      if (req.epoch !== this.requestEpoch) continue;
+      if (this.cache.has(req.key)) continue;
+      const entry = this._render(req.item);
+      entry.lastUsed = performance.now();
+      this.cache.set(req.key, entry);
+      this.itemKeys.set(req.item.id, req.key);
+      if (this.cache.size > 200) this._evict();
+      built += 1;
+      if (this._onTextureReady) this._onTextureReady();
+      if (built >= this.maxBuildsPerFrame) break;
+    }
+    if (this.pending.size > 0) this._scheduleBuild();
   }
 
   // Cache key covers only what affects glyph shape.
@@ -41,15 +100,13 @@ export class TextRenderer {
       return cached;
     }
 
-    const entry = this._render(item);
-    entry.lastUsed = performance.now();
-    this.cache.set(key, entry);
-    this.itemKeys.set(item.id, key);
-
-    // Evict old entries if cache is large
-    if (this.cache.size > 200) this._evict();
-
-    return entry;
+    // Defer expensive text rasterization and spread it over frames.
+    const pendingReq = this.pending.get(item.id);
+    if (!pendingReq || pendingReq.key !== key) {
+      this.pending.set(item.id, { item: { ...item }, key, epoch: this.requestEpoch });
+    }
+    this._scheduleBuild();
+    return this.transparent;
   }
 
   _render(item) {
@@ -187,6 +244,7 @@ export class TextRenderer {
       }
       this.itemKeys.delete(itemId);
     }
+    this.pending.delete(itemId);
   }
 
   // Invalidate every cached texture — use when fonts finish loading
@@ -194,13 +252,17 @@ export class TextRenderer {
     for (const entry of this.cache.values()) this.gl.deleteTexture(entry.tex);
     this.cache.clear();
     this.itemKeys.clear();
+    this.pending.clear();
   }
 
   destroy() {
+    if (this._raf) cancelAnimationFrame(this._raf);
     for (const entry of this.cache.values()) {
       this.gl.deleteTexture(entry.tex);
     }
+    this.gl.deleteTexture(this.transparent.tex);
     this.cache.clear();
     this.itemKeys.clear();
+    this.pending.clear();
   }
 }
