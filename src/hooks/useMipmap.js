@@ -18,7 +18,6 @@ export function useMipmap(items, updateItem, vp) {
   const [settled, setSettled] = useState(0); // increments on each settle
   const itemsRef = useRef(items);
   itemsRef.current = items;
-  const displayDelayTimerRef = useRef(null);
 
   // Wire up the settled callback from useViewport
   useEffect(() => {
@@ -88,32 +87,20 @@ export function useMipmap(items, updateItem, vp) {
     }
   }, [vp, updateItem]);
 
-  const scheduleDisplaySources = useCallback((delay = 120) => {
-    if (displayDelayTimerRef.current) clearTimeout(displayDelayTimerRef.current);
-    displayDelayTimerRef.current = setTimeout(() => {
-      displayDelayTimerRef.current = null;
-      computeDisplaySources();
-    }, delay);
-  }, [computeDisplaySources]);
-
   // Re-evaluate on every settle event
   useEffect(() => {
-    if (settled > 0) scheduleDisplaySources();
-  }, [settled, scheduleDisplaySources]);
+    if (settled > 0) computeDisplaySources();
+  }, [settled, computeDisplaySources]);
 
   // Also evaluate once when mipmaps become available
   const prevMipmapCountRef = useRef(0);
   useEffect(() => {
     const count = items.filter(i => i.srcQ50 || i.srcQ25 || i.srcQ12 || i.srcQ6).length;
     if (count > prevMipmapCountRef.current) {
-      scheduleDisplaySources();
+      computeDisplaySources();
     }
     prevMipmapCountRef.current = count;
-  }, [items, scheduleDisplaySources]);
-
-  useEffect(() => () => {
-    if (displayDelayTimerRef.current) clearTimeout(displayDelayTimerRef.current);
-  }, []);
+  }, [items, computeDisplaySources]);
 }
 
 function itemIsOnscreen(item, bounds) {

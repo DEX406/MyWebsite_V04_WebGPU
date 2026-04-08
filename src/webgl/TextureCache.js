@@ -2,6 +2,7 @@
 // Supports FIFO eviction with placeholder protection — low-res placeholders are evicted last.
 
 const MAX_TEXTURES = 200; // max cached textures before eviction kicks in
+const GLOBAL_IMAGE_UPLOAD_DELAY_MS = 500; // temporary debug delay for CPU->GPU image upload
 
 export class TextureCache {
   constructor(gl, onTextureReady) {
@@ -73,21 +74,23 @@ export class TextureCache {
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
-        this.loading.delete(url);
-        const gl = this.gl;
-        const tex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        this.cache.set(url, {
-          tex, width: img.naturalWidth, height: img.naturalHeight,
-          ready: true, isPlaceholder, insertOrder: this.insertCounter++,
-        });
-        this._evict();
-        if (this._onTextureReady) this._onTextureReady();
+        setTimeout(() => {
+          this.loading.delete(url);
+          const gl = this.gl;
+          const tex = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          this.cache.set(url, {
+            tex, width: img.naturalWidth, height: img.naturalHeight,
+            ready: true, isPlaceholder, insertOrder: this.insertCounter++,
+          });
+          this._evict();
+          if (this._onTextureReady) this._onTextureReady();
+        }, GLOBAL_IMAGE_UPLOAD_DELAY_MS);
       };
       img.onerror = () => {
         this.loading.delete(url);
