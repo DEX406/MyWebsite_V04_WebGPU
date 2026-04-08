@@ -2,8 +2,8 @@
 // Supports FIFO eviction with placeholder protection — low-res placeholders are evicted last.
 
 const MAX_TEXTURES = 200; // max cached textures before eviction kicks in
-const GLOBAL_IMAGE_UPLOAD_DELAY_MS = 16; // temporary debug delay for CPU->GPU image upload
-const MAX_CONCURRENT_IMAGE_REQUESTS = 8; // throttle request fan-out
+const GLOBAL_IMAGE_UPLOAD_DELAY_MS = 100; // temporary debug delay for CPU->GPU image upload
+const MAX_CONCURRENT_IMAGE_REQUESTS = 1; // throttle request fan-out
 const IMAGE_REQUEST_SPACING_MS = 16; // stagger request starts
 
 export class TextureCache {
