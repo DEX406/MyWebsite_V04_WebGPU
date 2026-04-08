@@ -12,7 +12,7 @@ export class TextureCache {
     this.cache = new Map(); // url → { tex, width, height, ready, isPlaceholder, insertOrder }
     this.videos = new Map(); // itemId → { video, tex, needsUpdate }
     this.loading = new Set(); // urls currently loading
-    this.pendingLoads = new Map(); // url -> { pixelated, isPlaceholder }
+    this.pendingLoads = new Map(); // url -> { pixelated, isPlaceholder, score, itemId, distance, neededLevel }
     this.loadPumpTimer = null;
     this.insertCounter = 0; // monotonic counter for FIFO ordering
     this._onTextureReady = onTextureReady || null; // callback when any texture finishes loading
@@ -66,21 +66,41 @@ export class TextureCache {
   // Get texture for an image URL. Returns { tex, width, height, ready }.
   // Starts async load if not cached. Returns fallback until ready.
   // isPlaceholder: mark this entry as a low-res placeholder (evicted last)
-  get(url, pixelated = false, isPlaceholder = false) {
+  get(url, pixelated = false, isPlaceholder = false, priority = null) {
     if (!url) return this.transparent;
 
     const cached = this.cache.get(url);
     if (cached) return cached;
 
-    this._enqueueLoad(url, pixelated, isPlaceholder);
+    this._enqueueLoad(url, pixelated, isPlaceholder, priority);
 
     return this.fallback;
   }
 
-  _enqueueLoad(url, pixelated, isPlaceholder) {
-    if (!url || this.cache.has(url) || this.loading.has(url) || this.pendingLoads.has(url)) return;
-    this.pendingLoads.set(url, { pixelated, isPlaceholder });
+  _enqueueLoad(url, pixelated, isPlaceholder, priority) {
+    if (!url || this.cache.has(url) || this.loading.has(url)) return;
+    const req = this._buildRequest(url, pixelated, isPlaceholder, priority);
+    const prev = this.pendingLoads.get(url);
+    if (!prev || req.score < prev.score) {
+      this.pendingLoads.set(url, req);
+    }
     this._scheduleLoadPump();
+  }
+
+  _buildRequest(url, pixelated, isPlaceholder, priority) {
+    const distance = Number.isFinite(priority?.distance) ? priority.distance : Number.MAX_SAFE_INTEGER;
+    const neededLevel = Number.isFinite(priority?.neededLevel) ? priority.neededLevel : 99;
+    // lower score = higher priority
+    const score = neededLevel * 1_000_000 + distance + (isPlaceholder ? 250_000 : 0);
+    return {
+      url,
+      pixelated,
+      isPlaceholder,
+      itemId: priority?.itemId ?? null,
+      distance,
+      neededLevel,
+      score,
+    };
   }
 
   _scheduleLoadPump() {
@@ -97,10 +117,13 @@ export class TextureCache {
       return;
     }
 
-    for (const [url, req] of this.pendingLoads) {
-      this.pendingLoads.delete(url);
-      this._startLoad(url, req.pixelated, req.isPlaceholder);
-      break; // one request start per pump tick
+    let best = null;
+    for (const req of this.pendingLoads.values()) {
+      if (!best || req.score < best.score) best = req;
+    }
+    if (best) {
+      this.pendingLoads.delete(best.url);
+      this._startLoad(best.url, best.pixelated, best.isPlaceholder);
     }
 
     if (this.pendingLoads.size > 0) this._scheduleLoadPump();
@@ -143,7 +166,7 @@ export class TextureCache {
   // Only kicks off loading for the target (first) and placeholder (last).
   // Checks all intermediate tiers for an already-cached texture to use in the meantime.
   // Returns { entry, url } of the best ready texture, or fallback.
-  getBestReady(candidates, pixelated = false) {
+  getBestReady(candidates, pixelated = false, priority = null) {
     let bestEntry = null;
     let bestUrl = null;
 
@@ -155,7 +178,11 @@ export class TextureCache {
 
       if (isFirst || isLast) {
         // Kick off loading for target (first) and placeholder (last)
-        const entry = this.get(url, pixelated, isLast);
+        const entry = this.get(url, pixelated, isLast, {
+          itemId: priority?.itemId ?? null,
+          distance: priority?.distance,
+          neededLevel: i,
+        });
         if (!bestEntry && entry.ready && entry !== this.fallback && entry !== this.transparent) {
           bestEntry = entry;
           bestUrl = url;

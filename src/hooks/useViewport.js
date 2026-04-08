@@ -9,6 +9,7 @@ export function useViewport() {
   const isPanningRef = useRef(false);
   const panStartRef = useRef({ x: 0, y: 0 });
   const homeViewRef = useRef(null);
+  const pointerWorldRef = useRef(null);
 
   const canvasRef = useRef(null);
   const canvasHandlesRef = useRef(null);
@@ -160,6 +161,7 @@ export function useViewport() {
 
   return {
     panRef, zoomRef, isPanningRef, panStartRef, homeViewRef,
+    pointerWorldRef,
     canvasRef, canvasHandlesRef, drawBgRef,
     posDisplayRef, zoomDisplayRef,
     applyTransform, updateDisplays, viewCenter, zoomTo, animateTo, goHome, setHome,

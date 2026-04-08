@@ -15,7 +15,7 @@ export function usePointerInput({
   doHitTest,
   setBoxSelect,
 }) {
-  const { panRef, zoomRef, isPanningRef, panStartRef, canvasRef, applyTransform, updateDisplays } = vp;
+  const { panRef, zoomRef, isPanningRef, panStartRef, canvasRef, pointerWorldRef, applyTransform, updateDisplays } = vp;
   const lastClickRef = useRef({ time: 0, itemId: null });
   const boxSelectRef = useRef(null);
   const itemsRef = useRef(items);
@@ -140,10 +140,19 @@ export function usePointerInput({
 
   const handlePointerMove = useCallback((e) => {
     if (e.pointerType === "touch") return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect && pointerWorldRef) {
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      pointerWorldRef.current = {
+        x: (sx - panRef.current.x) / zoomRef.current,
+        y: (sy - panRef.current.y) / zoomRef.current,
+      };
+    }
     const bs = boxSelectRef.current;
     if (bs) {
-      const rect = canvasRef.current?.getBoundingClientRect() ?? { left: 0, top: 0 };
-      const updated = { ...bs, currentX: e.clientX - rect.left, currentY: e.clientY - rect.top };
+      const r = rect ?? { left: 0, top: 0 };
+      const updated = { ...bs, currentX: e.clientX - r.left, currentY: e.clientY - r.top };
       boxSelectRef.current = updated;
       setBoxSelect({ ...updated });
       return;
