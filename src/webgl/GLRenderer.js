@@ -75,7 +75,10 @@ export class GLRenderer {
     this.texCache = new TextureCache(gl, () => {
       if (this._onNeedsRedraw) this._onNeedsRedraw();
     }, { isOffscreen: this.isOffscreen });
-    this.textRenderer = new TextRenderer(gl, { devicePixelRatio: this.devicePixelRatio });
+    this.textRenderer = new TextRenderer(gl, {
+      devicePixelRatio: this.devicePixelRatio,
+      useOffscreenCanvas: this.isOffscreen,
+    });
 
     this._initPrograms();
     this._initGeometry();

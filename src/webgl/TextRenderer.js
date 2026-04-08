@@ -8,9 +8,10 @@ export class TextRenderer {
   constructor(gl, opts = {}) {
     this.gl = gl;
     this.devicePixelRatio = opts.devicePixelRatio || 1;
+    const useOffscreenCanvas = !!opts.useOffscreenCanvas;
     this.cache = new Map();    // key → { tex, width, height, lastUsed }
     this.itemKeys = new Map(); // itemId → current cache key (1 live texture per item)
-    this.canvas = typeof OffscreenCanvas !== 'undefined'
+    this.canvas = useOffscreenCanvas && typeof OffscreenCanvas !== 'undefined'
       ? new OffscreenCanvas(1, 1)
       : document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d');
