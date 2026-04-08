@@ -1,4 +1,6 @@
-export const FONT = "'DM Sans', sans-serif";
+import { CUSTOM_FONTS } from './fontLibrary.js';
+
+export const FONT = CUSTOM_FONTS[0]?.value || "sans-serif";
 export const GRID_SIZE = 16;
 export const DEFAULT_BG_GRID = {
   enabled: true,
@@ -15,16 +17,7 @@ export const TEXT_PAD_Y = 8;     // vertical padding (px)
 export const TEXT_LINE_HEIGHT = 1.3; // line-height multiplier
 export const TEXT_DEFAULT_SIZE = 24; // default fontSize (px)
 
-export const FONTS = [
-  { label: "DM Sans", value: "'DM Sans', sans-serif" },
-  { label: "Georgia", value: "Georgia, serif" },
-  { label: "Courier", value: "'Courier New', monospace" },
-  { label: "Impact", value: "Impact, sans-serif" },
-  { label: "Comic Sans", value: "'Comic Sans MS', cursive" },
-  { label: "Times", value: "'Times New Roman', serif" },
-  { label: "Trebuchet", value: "'Trebuchet MS', sans-serif" },
-  { label: "Verdana", value: "Verdana, sans-serif" },
-];
+export const FONTS = CUSTOM_FONTS;
 
 export const SHAPE_PRESETS = [
   { label: "Rectangle", w: 208, h: 128 },
