@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { ZoomInIcon, ZoomOutIcon, GridIcon, HomeIcon, FloppyIcon, UndoIcon, RedoIcon, CopyIcon, PasteIcon, TrashIcon, GroupIcon, UngroupIcon, BringFrontIcon, SendBackIcon } from './icons.jsx';
 
 import { FONT, FONTS, DEFAULT_BG_GRID } from './constants.js';
+import { loadConfiguredFonts } from './fontLibrary.js';
 import { uid, snap, applyBg, isTyping, pasteItems, migrateItems } from './utils.js';
 import { createBackupZip, restoreFromZip } from './backupRestore.js';
 import { tbBtn, tbSurface, tbSep, togBtn, infoText, panelSurface, UI_BG, UI_BORDER, Z } from './styles.js';
@@ -129,7 +130,7 @@ export default function App() {
   // Wait for both board data AND web fonts before setting items so text is
   // never rasterized with a fallback font.
   useEffect(() => {
-    Promise.all([loadBoard(), document.fonts.ready]).then(([{ items: loaded, bgGrid: savedGrid, homeView: savedHome, palette: savedPalette }]) => {
+    Promise.all([loadBoard(), loadConfiguredFonts()]).then(([{ items: loaded, bgGrid: savedGrid, homeView: savedHome, palette: savedPalette }]) => {
       if (savedGrid) setBgGrid(savedGrid);
       if (savedPalette) setPalette(savedPalette);
       if (savedHome) vp.homeViewRef.current = savedHome;
@@ -144,6 +145,7 @@ export default function App() {
         vp.zoomRef.current = 1;
       }
       setItems(migrated);
+      webgl.rendererRef.current?.textRenderer.invalidateAll();
       setLoading(false);
     });
   }, []);
@@ -599,8 +601,6 @@ export default function App() {
         if (files.length) handleFilesRef.current(files);
       }}
     >
-      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-
       {/* Canvas */}
       <div ref={canvasRef} onPointerDown={handlePointerDown}
         style={{ width: "100%", height: "100%", cursor: dragging ? "move" : rotating ? "grabbing" : "grab", position: "relative", overflow: "hidden", touchAction: "none", zIndex: Z.CANVAS, isolation: "isolate" }}>
