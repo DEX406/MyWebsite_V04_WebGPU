@@ -18,12 +18,52 @@ export function useMipmap(items, updateItem, vp) {
   const [settled, setSettled] = useState(0); // increments on each settle
   const itemsRef = useRef(items);
   itemsRef.current = items;
+  const pendingQueueRef = useRef(new Map()); // src -> { itemId, epoch }
+  const queueEpochRef = useRef(0);
+  const queueTimerRef = useRef(null);
 
   // Wire up the settled callback from useViewport
   useEffect(() => {
     vp.onSettledRef.current = () => setSettled(c => c + 1);
     return () => { vp.onSettledRef.current = null; };
   }, [vp.onSettledRef]);
+
+  const scheduleQueuePump = useCallback(() => {
+    if (queueTimerRef.current) return;
+    queueTimerRef.current = setTimeout(() => {
+      queueTimerRef.current = null;
+      pumpQueue();
+    }, 120);
+  }, []);
+
+  const pumpQueue = useCallback(() => {
+    if (vp.interactingRef.current) return;
+    if (pendingQueueRef.current.size === 0) return;
+
+    for (const [src, req] of pendingQueueRef.current) {
+      pendingQueueRef.current.delete(src);
+      if (req.epoch !== queueEpochRef.current) continue;
+      if (pendingGenerations.has(src)) continue;
+      pendingGenerations.add(src);
+      generateMipmaps(src).then(result => {
+        pendingGenerations.delete(src);
+        if (result && (result.srcQ50 || result.srcQ25 || result.srcQ12 || result.srcQ6)) {
+          updateItem(req.itemId, {
+            srcQ50: result.srcQ50 || null,
+            srcQ25: result.srcQ25 || null,
+            srcQ12: result.srcQ12 || null,
+            srcQ6: result.srcQ6 || null,
+          });
+        }
+        scheduleQueuePump();
+      }).catch(() => {
+        pendingGenerations.delete(src);
+        scheduleQueuePump();
+      });
+      break; // one generation per tick to offset load-in spikes
+    }
+    if (pendingQueueRef.current.size > 0) scheduleQueuePump();
+  }, [updateItem, vp.interactingRef, scheduleQueuePump]);
 
   // Trigger mipmap generation for images missing variants
   useEffect(() => {
@@ -45,22 +85,28 @@ export function useMipmap(items, updateItem, vp) {
     const r2Images = eligible.filter(i => i.src.includes('r2.dev'));
 
     for (const item of r2Images) {
-      pendingGenerations.add(item.src);
-      generateMipmaps(item.src).then(result => {
-        pendingGenerations.delete(item.src);
-        if (result && (result.srcQ50 || result.srcQ25 || result.srcQ12 || result.srcQ6)) {
-          updateItem(item.id, {
-            srcQ50: result.srcQ50 || null,
-            srcQ25: result.srcQ25 || null,
-            srcQ12: result.srcQ12 || null,
-            srcQ6: result.srcQ6 || null,
-          });
-        }
-      }).catch(() => {
-        pendingGenerations.delete(item.src);
-      });
+      pendingQueueRef.current.set(item.src, { itemId: item.id, epoch: queueEpochRef.current });
     }
-  }, [items, updateItem]);
+    scheduleQueuePump();
+  }, [items, vp.interactingRef, scheduleQueuePump]);
+
+  // Cancel queued mipmap starts when movement resumes; restart once settled
+  useEffect(() => {
+    if (vp.interactingRef.current) {
+      queueEpochRef.current += 1;
+      pendingQueueRef.current.clear();
+      if (queueTimerRef.current) {
+        clearTimeout(queueTimerRef.current);
+        queueTimerRef.current = null;
+      }
+      return;
+    }
+    scheduleQueuePump();
+  }, [settled, items.length, vp.interactingRef, scheduleQueuePump]);
+
+  useEffect(() => () => {
+    if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
+  }, []);
 
   // Compute display sources for all image items whenever viewport settles
   const computeDisplaySources = useCallback(() => {
