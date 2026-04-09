@@ -83,6 +83,16 @@ export function useWebGLCanvas() {
     }
   }, []);
 
+  const setTextRasterDelay = useCallback((ms) => {
+    const renderer = rendererRef.current;
+    if (renderer) renderer.setTextRasterDelay(ms);
+  }, []);
+
+  const setImageUploadDelay = useCallback((ms) => {
+    const renderer = rendererRef.current;
+    if (renderer) renderer.setImageUploadDelay(ms);
+  }, []);
+
   // Cleanup
   useEffect(() => {
     return () => {
@@ -102,5 +112,7 @@ export function useWebGLCanvas() {
     renderSync,
     doHitTest,
     invalidateText,
+    setTextRasterDelay,
+    setImageUploadDelay,
   };
 }

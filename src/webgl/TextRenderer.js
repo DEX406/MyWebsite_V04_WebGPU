@@ -5,12 +5,17 @@
 import { TEXT_PAD_X, TEXT_PAD_Y, TEXT_LINE_HEIGHT, TEXT_DEFAULT_SIZE, FONT } from '../constants.js';
 
 export class TextRenderer {
-  constructor(gl) {
+  constructor(gl, options = {}) {
     this.gl = gl;
     this.cache = new Map();    // key → { tex, width, height, lastUsed }
     this.itemKeys = new Map(); // itemId → current cache key (1 live texture per item)
     this.canvas = document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d');
+    this.pending = new Map(); // key → { item }
+    this.queue = [];
+    this.queueTimer = 0;
+    this.rasterDelayMs = Math.max(0, Number(options.rasterDelayMs ?? 0) || 0);
+    this.onTextureReady = typeof options.onTextureReady === 'function' ? options.onTextureReady : null;
   }
 
   // Cache key covers only what affects glyph shape.
@@ -41,15 +46,45 @@ export class TextRenderer {
       return cached;
     }
 
-    const entry = this._render(item);
-    entry.lastUsed = performance.now();
-    this.cache.set(key, entry);
+    // Queue uncached rasterization so many text items don't spike in one frame.
+    if (!this.pending.has(key)) {
+      const snapshot = {
+        ...item,
+        text: item.text || '',
+      };
+      this.pending.set(key, { item: snapshot });
+      this.queue.push(key);
+      this._ensureQueue();
+    }
     this.itemKeys.set(item.id, key);
+    return null;
+  }
 
-    // Evict old entries if cache is large
-    if (this.cache.size > 200) this._evict();
+  setRasterDelay(ms) {
+    this.rasterDelayMs = Math.max(0, Number(ms) || 0);
+  }
 
-    return entry;
+  _ensureQueue() {
+    if (this.queueTimer || this.queue.length === 0) return;
+    this.queueTimer = window.setTimeout(() => {
+      this.queueTimer = 0;
+      this._processQueueOnce();
+    }, this.rasterDelayMs);
+  }
+
+  _processQueueOnce() {
+    const key = this.queue.shift();
+    if (!key) return;
+    const job = this.pending.get(key);
+    if (job) {
+      const entry = this._render(job.item);
+      entry.lastUsed = performance.now();
+      this.cache.set(key, entry);
+      this.pending.delete(key);
+      if (this.cache.size > 200) this._evict();
+      if (this.onTextureReady) this.onTextureReady();
+    }
+    this._ensureQueue();
   }
 
   _render(item) {
@@ -185,6 +220,7 @@ export class TextRenderer {
         this.gl.deleteTexture(entry.tex);
         this.cache.delete(key);
       }
+      this.pending.delete(key);
       this.itemKeys.delete(itemId);
     }
   }
@@ -194,13 +230,25 @@ export class TextRenderer {
     for (const entry of this.cache.values()) this.gl.deleteTexture(entry.tex);
     this.cache.clear();
     this.itemKeys.clear();
+    this.pending.clear();
+    this.queue.length = 0;
+    if (this.queueTimer) {
+      window.clearTimeout(this.queueTimer);
+      this.queueTimer = 0;
+    }
   }
 
   destroy() {
+    if (this.queueTimer) {
+      window.clearTimeout(this.queueTimer);
+      this.queueTimer = 0;
+    }
     for (const entry of this.cache.values()) {
       this.gl.deleteTexture(entry.tex);
     }
     this.cache.clear();
     this.itemKeys.clear();
+    this.pending.clear();
+    this.queue.length = 0;
   }
 }

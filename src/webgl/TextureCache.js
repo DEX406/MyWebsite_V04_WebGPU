@@ -4,13 +4,17 @@
 const MAX_TEXTURES = 200; // max cached textures before eviction kicks in
 
 export class TextureCache {
-  constructor(gl, onTextureReady) {
+  constructor(gl, onTextureReady, options = {}) {
     this.gl = gl;
     this.cache = new Map(); // url → { tex, width, height, ready, isPlaceholder, insertOrder }
     this.videos = new Map(); // itemId → { video, tex, needsUpdate }
     this.loading = new Set(); // urls currently loading
     this.insertCounter = 0; // monotonic counter for FIFO ordering
     this._onTextureReady = onTextureReady || null; // callback when any texture finishes loading
+    this.imageUploadDelayMs = Math.max(0, Number(options.imageUploadDelayMs ?? 0) || 0);
+    this.pendingUploads = new Map(); // url -> { img, isPlaceholder }
+    this.uploadQueue = [];
+    this.uploadTimer = 0;
     // 1x1 transparent fallback texture (used while images load)
     this.fallback = this._create1x1([0, 0, 0, 0]);
     // 1x1 transparent fallback
@@ -74,28 +78,62 @@ export class TextureCache {
       img.crossOrigin = 'anonymous';
       img.onload = () => {
         this.loading.delete(url);
-        const gl = this.gl;
-        const tex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        this.cache.set(url, {
-          tex, width: img.naturalWidth, height: img.naturalHeight,
-          ready: true, isPlaceholder, insertOrder: this.insertCounter++,
-        });
-        this._evict();
-        if (this._onTextureReady) this._onTextureReady();
+        this._enqueueUpload(url, img, isPlaceholder);
       };
       img.onerror = () => {
         this.loading.delete(url);
+        this.pendingUploads.delete(url);
       };
       img.src = url;
     }
 
     return this.fallback;
+  }
+
+  setImageUploadDelay(ms) {
+    this.imageUploadDelayMs = Math.max(0, Number(ms) || 0);
+  }
+
+  _enqueueUpload(url, img, isPlaceholder) {
+    if (this.cache.has(url)) return;
+    if (!this.pendingUploads.has(url)) {
+      this.uploadQueue.push(url);
+    }
+    this.pendingUploads.set(url, { img, isPlaceholder });
+    this._ensureUploadQueue();
+  }
+
+  _ensureUploadQueue() {
+    if (this.uploadTimer || this.uploadQueue.length === 0) return;
+    this.uploadTimer = window.setTimeout(() => {
+      this.uploadTimer = 0;
+      this._processUploadQueueOnce();
+    }, this.imageUploadDelayMs);
+  }
+
+  _processUploadQueueOnce() {
+    const url = this.uploadQueue.shift();
+    if (!url) return;
+    const job = this.pendingUploads.get(url);
+    if (job && !this.cache.has(url)) {
+      const { img, isPlaceholder } = job;
+      const gl = this.gl;
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this.cache.set(url, {
+        tex, width: img.naturalWidth, height: img.naturalHeight,
+        ready: true, isPlaceholder, insertOrder: this.insertCounter++,
+      });
+      this._evict();
+      if (this._onTextureReady) this._onTextureReady();
+    }
+    this.pendingUploads.delete(url);
+    this._ensureUploadQueue();
   }
 
   // Get the best available texture from a prioritized list of URLs (best-to-worst).
@@ -215,6 +253,10 @@ export class TextureCache {
 
   destroy() {
     const gl = this.gl;
+    if (this.uploadTimer) {
+      window.clearTimeout(this.uploadTimer);
+      this.uploadTimer = 0;
+    }
     for (const entry of this.cache.values()) {
       gl.deleteTexture(entry.tex);
     }
@@ -227,5 +269,7 @@ export class TextureCache {
     gl.deleteTexture(this.transparent.tex);
     this.cache.clear();
     this.videos.clear();
+    this.pendingUploads.clear();
+    this.uploadQueue.length = 0;
   }
 }
