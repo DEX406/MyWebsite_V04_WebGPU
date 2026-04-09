@@ -7,6 +7,7 @@ import {
 } from './shaders.js';
 import { TextureCache } from './TextureCache.js';
 import { TextRenderer } from './TextRenderer.js';
+import { PillRenderer } from './PillRenderer.js';
 import { hexToRgb } from '../utils.js';
 
 function hexToRgba(hex, alpha = 1) {
@@ -15,8 +16,8 @@ function hexToRgba(hex, alpha = 1) {
 
 const SUPERSAMPLE = 2;
 const MAX_QUAD_DRAWS = 1024;
-const MAX_LINE_DRAWS = 256;
-const MAX_CIRCLE_DRAWS = 512;
+const MAX_LINE_DRAWS = 512;
+const MAX_CIRCLE_DRAWS = 1024;
 
 export class GPURenderer {
   constructor(canvas, device, context) {
@@ -30,6 +31,7 @@ export class GPURenderer {
       if (this._onNeedsRedraw) this._onNeedsRedraw();
     });
     this.textRenderer = new TextRenderer(device);
+    this.pillRenderer = new PillRenderer(device);
 
     this._align = Math.max(256, device.limits.minUniformBufferOffsetAlignment);
     this._bindGroupCache = new WeakMap(); // GPUTextureView → GPUBindGroup
@@ -236,6 +238,39 @@ export class GPURenderer {
       this._collectSelection(item, panDpr, panDprY, zoomDpr, resW, resH, quadDraws);
     }
 
+    // ── Phase 1b: Collect overlay draws (handles, pills, group box) ──
+    // Separate arrays for correct layering: content → overlay quads → overlay lines → overlay circles → delete X lines
+    const oQuads = [];    // group box, info pills
+    const oLines = [];    // rotation rods
+    const oCircles = [];  // handle dots, knobs, delete circles
+    const oXLines = [];   // delete X marks (must render on top of circles)
+
+    for (const item of sorted) {
+      if (!selSet.has(item.id)) continue;
+      if (item.type === 'connector') {
+        const cL = Math.min(item.x1, item.x2), cT = Math.min(item.y1, item.y2);
+        const cR = Math.max(item.x1, item.x2), cB = Math.max(item.y1, item.y2);
+        if (cR < vpLeft || cL > vpRight || cB < vpTop || cT > vpBottom) continue;
+        this._collectConnectorHandles(item, panDpr, panDprY, zoomDpr, resW, resH, oCircles, oXLines);
+      } else {
+        if (item.x + item.w < vpLeft || item.x > vpRight || item.y + item.h < vpTop || item.y > vpBottom) continue;
+        this._collectItemHandles(item, panDpr, panDprY, zoomDpr, resW, resH, oLines, oCircles, oXLines);
+        if (item.type === 'image' || item.type === 'video') {
+          this._collectInfoPill(item, panDpr, panDprY, zoomDpr, resW, resH, oQuads);
+        }
+      }
+    }
+    this._collectGroupBox(items, selectedIds, panDpr, panDprY, zoomDpr, resW, resH, oQuads);
+
+    // Combine content + overlay into unified arrays for uniform upload
+    const cQuadCount = quadDraws.length;
+    const cLineCount = lineDraws.length;
+    const cCircleCount = circleDraws.length;
+
+    const allQuads = oQuads.length > 0 ? [...quadDraws, ...oQuads] : quadDraws;
+    const allLines = (oLines.length + oXLines.length) > 0 ? [...lineDraws, ...oLines, ...oXLines] : lineDraws;
+    const allCircles = oCircles.length > 0 ? [...circleDraws, ...oCircles] : circleDraws;
+
     // ── Phase 2: Upload uniform data ──
 
     // Grid uniforms
@@ -265,28 +300,28 @@ export class GPURenderer {
     device.queue.writeBuffer(this.gridUniformBuf, 0, gridData);
 
     // Quad uniforms (packed into aligned slots)
-    if (quadDraws.length > 0) {
-      const quadBuf = new ArrayBuffer(A * quadDraws.length);
-      for (let i = 0; i < quadDraws.length; i++) {
-        new Float32Array(quadBuf, A * i, 40).set(quadDraws[i].uniforms);
+    if (allQuads.length > 0) {
+      const quadBuf = new ArrayBuffer(A * allQuads.length);
+      for (let i = 0; i < allQuads.length; i++) {
+        new Float32Array(quadBuf, A * i, 40).set(allQuads[i].uniforms);
       }
       device.queue.writeBuffer(this.quadUniformBuf, 0, new Uint8Array(quadBuf));
     }
 
     // Line uniforms
-    if (lineDraws.length > 0) {
-      const lineBuf = new ArrayBuffer(A * lineDraws.length);
-      for (let i = 0; i < lineDraws.length; i++) {
-        new Float32Array(lineBuf, A * i, 12).set(lineDraws[i].uniforms);
+    if (allLines.length > 0) {
+      const lineBuf = new ArrayBuffer(A * allLines.length);
+      for (let i = 0; i < allLines.length; i++) {
+        new Float32Array(lineBuf, A * i, 12).set(allLines[i].uniforms);
       }
       device.queue.writeBuffer(this.lineUniformBuf, 0, new Uint8Array(lineBuf));
 
       // Concatenate all line vertices
       let totalVerts = 0;
-      for (const d of lineDraws) totalVerts += d.verts.length;
+      for (const d of allLines) totalVerts += d.verts.length;
       const allVerts = new Float32Array(totalVerts);
       let offset = 0;
-      for (const d of lineDraws) {
+      for (const d of allLines) {
         allVerts.set(d.verts, offset);
         d._vertOffset = offset / 2; // in vertices
         d._vertCount = d.verts.length / 2;
@@ -302,10 +337,10 @@ export class GPURenderer {
     }
 
     // Circle uniforms
-    if (circleDraws.length > 0) {
-      const circleBuf = new ArrayBuffer(A * circleDraws.length);
-      for (let i = 0; i < circleDraws.length; i++) {
-        new Float32Array(circleBuf, A * i, 12).set(circleDraws[i].uniforms);
+    if (allCircles.length > 0) {
+      const circleBuf = new ArrayBuffer(A * allCircles.length);
+      for (let i = 0; i < allCircles.length; i++) {
+        new Float32Array(circleBuf, A * i, 12).set(allCircles[i].uniforms);
       }
       device.queue.writeBuffer(this.circleUniformBuf, 0, new Uint8Array(circleBuf));
     }
@@ -342,34 +377,81 @@ export class GPURenderer {
       }
     }
 
+    // ── Content layer ──
+
     // Quad draws (items + selections)
-    if (quadDraws.length > 0) {
+    if (cQuadCount > 0) {
       pass.setPipeline(this.quadPipeline);
       pass.setVertexBuffer(0, this.quadVertBuf);
-      for (let i = 0; i < quadDraws.length; i++) {
+      for (let i = 0; i < cQuadCount; i++) {
         pass.setBindGroup(0, this.quadBindGroup, [A * i]);
-        pass.setBindGroup(1, quadDraws[i].texBindGroup);
+        pass.setBindGroup(1, allQuads[i].texBindGroup);
         pass.draw(6);
       }
     }
 
-    // Line draws
-    if (lineDraws.length > 0) {
+    // Line draws (connectors)
+    if (cLineCount > 0) {
       pass.setPipeline(this.linePipeline);
       pass.setVertexBuffer(0, this.lineVertBuf);
-      for (let i = 0; i < lineDraws.length; i++) {
+      for (let i = 0; i < cLineCount; i++) {
         pass.setBindGroup(0, this.lineBindGroup, [A * i]);
-        pass.draw(lineDraws[i]._vertCount, 1, lineDraws[i]._vertOffset, 0);
+        pass.draw(allLines[i]._vertCount, 1, allLines[i]._vertOffset, 0);
       }
     }
 
-    // Circle draws
-    if (circleDraws.length > 0) {
+    // Circle draws (connector dots)
+    if (cCircleCount > 0) {
       pass.setPipeline(this.circlePipeline);
       pass.setVertexBuffer(0, this.quadVertBuf);
-      for (let i = 0; i < circleDraws.length; i++) {
+      for (let i = 0; i < cCircleCount; i++) {
         pass.setBindGroup(0, this.circleBindGroup, [A * i]);
         pass.draw(6);
+      }
+    }
+
+    // ── Overlay layer (handles, pills, group box — rendered on top of content) ──
+
+    // Overlay quads (group bounding box, info pills)
+    if (oQuads.length > 0) {
+      pass.setPipeline(this.quadPipeline);
+      pass.setVertexBuffer(0, this.quadVertBuf);
+      for (let i = cQuadCount; i < allQuads.length; i++) {
+        pass.setBindGroup(0, this.quadBindGroup, [A * i]);
+        pass.setBindGroup(1, allQuads[i].texBindGroup);
+        pass.draw(6);
+      }
+    }
+
+    // Overlay lines (rotation rods)
+    if (oLines.length > 0) {
+      pass.setPipeline(this.linePipeline);
+      pass.setVertexBuffer(0, this.lineVertBuf);
+      const oLineEnd = cLineCount + oLines.length;
+      for (let i = cLineCount; i < oLineEnd; i++) {
+        pass.setBindGroup(0, this.lineBindGroup, [A * i]);
+        pass.draw(allLines[i]._vertCount, 1, allLines[i]._vertOffset, 0);
+      }
+    }
+
+    // Overlay circles (handle dots border+fill, knobs, delete circles)
+    if (oCircles.length > 0) {
+      pass.setPipeline(this.circlePipeline);
+      pass.setVertexBuffer(0, this.quadVertBuf);
+      for (let i = cCircleCount; i < allCircles.length; i++) {
+        pass.setBindGroup(0, this.circleBindGroup, [A * i]);
+        pass.draw(6);
+      }
+    }
+
+    // Delete X lines (rendered last, on top of delete circles)
+    if (oXLines.length > 0) {
+      pass.setPipeline(this.linePipeline);
+      pass.setVertexBuffer(0, this.lineVertBuf);
+      const xStart = cLineCount + oLines.length;
+      for (let i = xStart; i < allLines.length; i++) {
+        pass.setBindGroup(0, this.lineBindGroup, [A * i]);
+        pass.draw(allLines[i]._vertCount, 1, allLines[i]._vertOffset, 0);
       }
     }
 
@@ -629,8 +711,242 @@ export class GPURenderer {
     return [...hexToRgb(item.bgColor), op];
   }
 
+  // ── Overlay collection (handles, pills, group box) ────────────────────────
+
+  _collectItemHandles(item, panDpr, panDprY, zoomDpr, resW, resH, oLines, oCircles, oXLines) {
+    const rot = (item.rotation || 0) * Math.PI / 180;
+    const cx = item.x + item.w / 2;
+    const cy = item.y + item.h / 2;
+    const cosR = Math.cos(rot);
+    const sinR = Math.sin(rot);
+    const rp = (px, py) => [
+      cx + (px - cx) * cosR - (py - cy) * sinR,
+      cy + (px - cx) * sinR + (py - cy) * cosR,
+    ];
+
+    const BLUE = [0.173, 0.518, 0.859, 0.85];
+    const BLUE_ROD = [0.173, 0.518, 0.859, 0.7];
+    const FILL = [0.761, 0.753, 0.714, 1.0];
+    const RED = [0.996, 0.506, 0.506, 0.88];
+    const X_COL = [0.761, 0.753, 0.714, 1.0];
+
+    const addCircle = (wcx, wcy, radius, color) => {
+      const u = new Float32Array(12);
+      u[0] = resW; u[1] = resH; u[2] = panDpr; u[3] = panDprY;
+      u[4] = zoomDpr; u[5] = radius; u[6] = wcx; u[7] = wcy;
+      u.set(color, 8);
+      oCircles.push({ uniforms: u });
+    };
+    const addBordered = (wcx, wcy, r, bw, fill, border) => {
+      addCircle(wcx, wcy, r + bw, border);
+      addCircle(wcx, wcy, r, fill);
+    };
+
+    // Rotation rod: from top-center down to 1px above item, up to rod end
+    const rodStart = rp(cx, item.y - 1);
+    const rodEnd = rp(cx, item.y - 37);
+    const rodVerts = this._thickLineVerts([rodStart, rodEnd], 0.75);
+    if (rodVerts.length > 0) {
+      const u = new Float32Array(12);
+      u[0] = resW; u[1] = resH; u[2] = panDpr; u[3] = panDprY; u[4] = zoomDpr;
+      u.set(BLUE_ROD, 8);
+      oLines.push({ uniforms: u, verts: new Float32Array(rodVerts) });
+    }
+
+    // Rotation knob
+    const [knobX, knobY] = rp(cx, item.y - 42);
+    addBordered(knobX, knobY, 7, 1.5, FILL, BLUE);
+
+    // 4 corner handles
+    const corners = [[item.x, item.y], [item.x + item.w, item.y],
+                     [item.x, item.y + item.h], [item.x + item.w, item.y + item.h]];
+    for (const [lx, ly] of corners) {
+      const [wx, wy] = rp(lx, ly);
+      addBordered(wx, wy, 4.5, 1.5, FILL, BLUE);
+    }
+
+    // 4 edge midpoint handles
+    const mids = [[cx, item.y], [cx, item.y + item.h],
+                  [item.x, cy], [item.x + item.w, cy]];
+    for (const [lx, ly] of mids) {
+      const [wx, wy] = rp(lx, ly);
+      addBordered(wx, wy, 4.5, 1.5, FILL, BLUE);
+    }
+
+    // Delete circle
+    const [delX, delY] = rp(item.x + item.w + 17, item.y - 17);
+    addCircle(delX, delY, 11, RED);
+
+    // Delete X mark
+    const xH = 3.5;
+    const xPts = [
+      [item.x + item.w + 17 - xH, item.y - 17 - xH],
+      [item.x + item.w + 17 + xH, item.y - 17 + xH],
+      [item.x + item.w + 17 + xH, item.y - 17 - xH],
+      [item.x + item.w + 17 - xH, item.y - 17 + xH],
+    ].map(([px, py]) => rp(px, py));
+    const xVerts = [
+      ...this._thickLineVerts([xPts[0], xPts[1]], 0.6),
+      ...this._thickLineVerts([xPts[2], xPts[3]], 0.6),
+    ];
+    if (xVerts.length > 0) {
+      const u = new Float32Array(12);
+      u[0] = resW; u[1] = resH; u[2] = panDpr; u[3] = panDprY; u[4] = zoomDpr;
+      u.set(X_COL, 8);
+      oXLines.push({ uniforms: u, verts: new Float32Array(xVerts) });
+    }
+  }
+
+  _collectConnectorHandles(item, panDpr, panDprY, zoomDpr, resW, resH, oCircles, oXLines) {
+    const { x1, y1, x2, y2 } = item;
+    const elbowX = item.elbowX ?? (x1 + x2) / 2;
+    const elbowY = item.elbowY ?? (y1 + y2) / 2;
+    const orient = item.orientation || 'h';
+    const midX = (x1 + x2) / 2;
+    const midY = (y1 + y2) / 2;
+    const handleX = orient === 'h' ? elbowX : midX;
+    const handleY = orient === 'h' ? midY : elbowY;
+
+    const BLUE = [0.173, 0.518, 0.859, 0.85];
+    const FILL = [0.761, 0.753, 0.714, 1.0];
+    const RED = [0.996, 0.506, 0.506, 0.88];
+    const X_COL = [0.761, 0.753, 0.714, 1.0];
+
+    const addCircle = (wcx, wcy, radius, color) => {
+      const u = new Float32Array(12);
+      u[0] = resW; u[1] = resH; u[2] = panDpr; u[3] = panDprY;
+      u[4] = zoomDpr; u[5] = radius; u[6] = wcx; u[7] = wcy;
+      u.set(color, 8);
+      oCircles.push({ uniforms: u });
+    };
+
+    // Elbow handle (bordered)
+    addCircle(handleX, handleY, 6.5, BLUE);
+    addCircle(handleX, handleY, 5, FILL);
+
+    // Delete circle
+    const delX = handleX + 18;
+    const delY = handleY - 18;
+    addCircle(delX, delY, 11, RED);
+
+    // Delete X mark
+    const xH = 3.5;
+    const xVerts = [
+      ...this._thickLineVerts([[delX - xH, delY - xH], [delX + xH, delY + xH]], 0.6),
+      ...this._thickLineVerts([[delX + xH, delY - xH], [delX - xH, delY + xH]], 0.6),
+    ];
+    if (xVerts.length > 0) {
+      const u = new Float32Array(12);
+      u[0] = resW; u[1] = resH; u[2] = panDpr; u[3] = panDprY; u[4] = zoomDpr;
+      u.set(X_COL, 8);
+      oXLines.push({ uniforms: u, verts: new Float32Array(xVerts) });
+    }
+  }
+
+  _collectGroupBox(items, selectedIds, panDpr, panDprY, zoomDpr, resW, resH, oQuads) {
+    if (!selectedIds || selectedIds.length < 2) return;
+    const selSet = new Set(selectedIds);
+    const selItems = items.filter(i => selSet.has(i.id));
+    if (selItems.length < 2) return;
+    const gid = selItems[0]?.groupId;
+    if (!gid || !selItems.every(i => i.groupId === gid)) return;
+
+    const pad = 10;
+    const bounds = selItems.map(i => i.type === 'connector'
+      ? { x: Math.min(i.x1, i.x2, i.elbowX ?? (i.x1 + i.x2) / 2),
+          y: Math.min(i.y1, i.y2),
+          r: Math.max(i.x1, i.x2, i.elbowX ?? (i.x1 + i.x2) / 2),
+          b: Math.max(i.y1, i.y2) }
+      : { x: i.x, y: i.y, r: i.x + i.w, b: i.y + i.h });
+    const minX = Math.min(...bounds.map(b => b.x)) - pad;
+    const minY = Math.min(...bounds.map(b => b.y)) - pad;
+    const maxX = Math.max(...bounds.map(b => b.r)) + pad;
+    const maxY = Math.max(...bounds.map(b => b.b)) + pad;
+    const w = maxX - minX;
+    const h = maxY - minY;
+
+    const u = new Float32Array(40);
+    u[0] = resW; u[1] = resH; u[2] = panDpr; u[3] = panDprY; u[4] = zoomDpr;
+    u[5] = 0; u[6] = 6; u[7] = 1.0;
+    u[8] = minX; u[9] = minY; u[10] = w; u[11] = h;
+    u[12] = w; u[13] = h; u[14] = 0; u[15] = 0;
+    u.set([0, 0, 0, 0], 16); // transparent fill
+    u[20] = 0; u[21] = 0; u[22] = 1; u[23] = 1;
+    u.set([0.173, 0.518, 0.859, 0.3], 24); // border color
+    u[32] = 1; // border width
+    u[33] = 0; u[34] = 0; u[37] = 0; u[38] = 0;
+    oQuads.push({ uniforms: u, texBindGroup: this._fallbackTexBG });
+  }
+
+  _collectInfoPill(item, panDpr, panDprY, zoomDpr, resW, resH, oQuads) {
+    const src = item.src;
+    if (!src) return;
+    const format = this._imgFormat(src);
+    const srcType = this._imgSrcType(src);
+
+    // Dimensions from item properties or texture cache
+    let dimW = null, dimH = null;
+    if (item.naturalWidth && item.naturalHeight) {
+      dimW = item.naturalWidth;
+      dimH = item.naturalHeight;
+    } else {
+      const target = item.targetSrc || item.displaySrc || item.src;
+      const tiers = [item.src, item.srcQ50, item.srcQ25, item.srcQ12, item.srcQ6];
+      const seen = new Set();
+      const candidates = [];
+      for (const c of [target, ...tiers]) {
+        if (c && !seen.has(c)) { seen.add(c); candidates.push(c); }
+      }
+      const best = this.texCache.getBestReady(candidates, item.pixelated);
+      if (best.entry && best.entry.width > 1) {
+        dimW = best.entry.width;
+        dimH = best.entry.height;
+      }
+    }
+
+    const dimText = dimW && dimH ? `${dimW} \u00d7 ${dimH}` : null;
+    const parts = [format, srcType, dimText].filter(Boolean);
+    if (parts.length === 0) return;
+    const text = parts.join(' \u00b7 ');
+
+    const pill = this.pillRenderer.get(text);
+    const pillLeft = item.x + item.w / 2 - pill.cssWidth / 2;
+    const pillTop = item.y + item.h + 8;
+
+    const u = new Float32Array(40);
+    u[0] = resW; u[1] = resH; u[2] = panDpr; u[3] = panDprY; u[4] = zoomDpr;
+    u[5] = 0; u[6] = 0; u[7] = 1.0;
+    u[8] = pillLeft; u[9] = pillTop;
+    u[10] = pill.cssWidth; u[11] = pill.cssHeight;
+    u[12] = pill.cssWidth; u[13] = pill.cssHeight;
+    u[14] = 0; u[15] = 0;
+    u.set([1, 1, 1, 1], 16);
+    u[20] = 0; u[21] = 0; u[22] = 1; u[23] = 1;
+    u[33] = 1; // textured
+    u[34] = 0; u[37] = 0; u[38] = 0;
+    const texBG = this._getTexBindGroup(pill.view, this.pillRenderer.sampler);
+    oQuads.push({ uniforms: u, texBindGroup: texBG });
+  }
+
+  _imgFormat(src) {
+    if (!src) return null;
+    if (src.startsWith('data:image/')) {
+      const m = src.match(/^data:image\/(\w+)/);
+      return m ? m[1].toUpperCase() : null;
+    }
+    const ext = src.split('?')[0].split('#')[0].split('.').pop().toLowerCase();
+    return { jpg: 'JPEG', jpeg: 'JPEG', png: 'PNG', gif: 'GIF', webp: 'WebP', avif: 'AVIF', svg: 'SVG', bmp: 'BMP', webm: 'WEBM', mp4: 'MP4', mov: 'MOV' }[ext] || null;
+  }
+
+  _imgSrcType(src) {
+    if (!src) return null;
+    if (src.startsWith('http') && !src.includes('r2.dev')) return 'link';
+    return 'stored';
+  }
+
   destroy() {
     this.texCache.destroy();
     this.textRenderer.destroy();
+    this.pillRenderer.destroy();
   }
 }
