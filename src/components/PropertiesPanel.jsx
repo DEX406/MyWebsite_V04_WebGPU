@@ -2,7 +2,7 @@ import { useRef, useCallback } from 'react';
 import { FONT, FONTS } from '../constants.js';
 import { itemShadowEnabled } from '../utils.js';
 import { uploadImage, serverResize, downloadImageViaProxy } from '../api.js';
-import { MenuBarsIcon } from '../icons.jsx';
+import { ChevronUpIcon, ChevronDownIcon } from '../icons.jsx';
 import { togBtn, panelSurface, tbBtn, Z } from '../styles.js';
 
 /* ─────────────────────────────────────────────
@@ -212,7 +212,7 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
         <div style={topRightStyle}>
           <div style={collapseBoxStyle}>
             <button data-ui onClick={() => setCollapsed(!collapsed)} style={collapseButtonStyle} title={collapsed ? "Expand properties" : "Collapse properties"}>
-              <MenuBarsIcon size={18} />
+              {collapsed ? <ChevronDownIcon size={18} /> : <ChevronUpIcon size={18} />}
             </button>
           </div>
         </div>
@@ -238,7 +238,7 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
         <div style={topRightStyle}>
           <div style={collapseBoxStyle}>
             <button data-ui onClick={() => setCollapsed(!collapsed)} style={collapseButtonStyle} title={collapsed ? "Expand properties" : "Collapse properties"}>
-              <MenuBarsIcon size={18} />
+              {collapsed ? <ChevronDownIcon size={18} /> : <ChevronUpIcon size={18} />}
             </button>
           </div>
         </div>
@@ -286,7 +286,7 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
         <div style={topRightStyle}>
         <div style={collapseBoxStyle}>
           <button data-ui onClick={() => setCollapsed(!collapsed)} style={collapseButtonStyle} title={collapsed ? "Expand properties" : "Collapse properties"}>
-            <MenuBarsIcon size={18} />
+            {collapsed ? <ChevronDownIcon size={18} /> : <ChevronUpIcon size={18} />}
           </button>
         </div>
       </div>
