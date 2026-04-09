@@ -1,4 +1,3 @@
-import { XIcon } from '../icons.jsx';
 import { Z } from '../styles.js';
 
 export function ConnectorHandles({ item, deleteItems }) {
@@ -15,17 +14,14 @@ export function ConnectorHandles({ item, deleteItems }) {
   const delY = handleY - 18;
 
   const hS = { position: "absolute", width: 18, height: 18, background: "transparent", border: "none", borderRadius: "50%", transform: "translate(-50%, -50%)", cursor: "move", pointerEvents: "auto" };
-  const elbowHStyle = { position: "absolute", width: 10, height: 10, background: "#C2C0B6", border: "1.5px solid rgba(44,132,219,0.85)", borderRadius: "50%", transform: "translate(-50%, -50%)", cursor: "move", pointerEvents: "auto" };
 
   return (
     <div style={{ position: "absolute", left: 0, top: 0, width: 0, height: 0, zIndex: Z.HANDLE_GRIP, pointerEvents: "none" }}>
       <div data-item-id={item.id} data-action="move-ep1" style={{ ...hS, left: x1, top: y1 }} />
       <div data-item-id={item.id} data-action="move-ep2" style={{ ...hS, left: x2, top: y2 }} />
-      <div data-item-id={item.id} data-action="move-elbow" style={{ ...elbowHStyle, left: handleX, top: handleY }} />
+      <div data-item-id={item.id} data-action="move-elbow" style={{ ...hS, left: handleX, top: handleY }} />
       <button onPointerDown={e => { e.stopPropagation(); e.preventDefault(); deleteItems([item.id]); }}
-        style={{ position: "absolute", left: delX, top: delY, transform: "translate(-50%, -50%)", width: 22, height: 22, background: "rgba(254,129,129,0.88)", border: "none", borderRadius: "50%", color: "#C2C0B6", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 6px rgba(0,0,0,0.35)", pointerEvents: "auto" }}>
-        <XIcon size={12} />
-      </button>
+        style={{ position: "absolute", left: delX, top: delY, transform: "translate(-50%, -50%)", width: 22, height: 22, background: "transparent", border: "none", borderRadius: "50%", cursor: "pointer", pointerEvents: "auto" }} />
     </div>
   );
 }
