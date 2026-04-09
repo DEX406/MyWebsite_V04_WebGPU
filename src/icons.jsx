@@ -149,6 +149,10 @@ export const ChevronDownIcon = (p) => (
   <I {...p}><path d="M4 8l6 6 6-6" /></I>
 );
 
+export const MenuBarsIcon = (p) => (
+  <I {...p}><path d="M4 6h12M4 10h12M4 14h12" /></I>
+);
+
 export const HomeIcon = (p) => (
   <I {...p}><path d="M3 10l7-7 7 7M5 9v7a1 1 0 001 1h3v-4h2v4h3a1 1 0 001-1V9" /></I>
 );
