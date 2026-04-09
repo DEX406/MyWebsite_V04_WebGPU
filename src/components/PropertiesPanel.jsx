@@ -174,7 +174,7 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
     display: "flex",
     flexDirection: "column",
     alignItems: "flex-end",
-    gap: 8,
+    gap: 4,
   };
   const headerStyle = {
     ...panelSurface,
@@ -214,7 +214,7 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
     width: 260,
     display: "flex",
     alignItems: "center",
-    gap: 8,
+    gap: 4,
   };
 
   const inp = { background: PILL_BG, border: PILL_BRD, borderRadius: PILL_R, color: "rgba(194,192,182,0.82)", padding: "4px 10px", fontSize: 12, outline: "none", width: "100%", fontFamily: FONT, height: PILL_H, boxSizing: "border-box" };
