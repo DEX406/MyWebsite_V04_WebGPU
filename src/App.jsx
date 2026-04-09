@@ -617,21 +617,6 @@ export default function App() {
           <div style={{ position: "absolute", top: 0, left: 0, zIndex: Z.HANDLES, pointerEvents: "none" }}>
             <div ref={canvasHandlesRef} style={{ transform: `translate(${vp.panRef.current.x}px,${vp.panRef.current.y}px) scale(${vp.zoomRef.current})`, transformOrigin: "0 0" }}>
               {sortedItems.map(item => <CanvasItem key={item.id} item={item} selectedIds={selectedIds} isAdmin={isAdmin} editingTextId={editingTextId} deleteItems={deleteItems} updateItem={updateItem} setEditingTextId={setEditingTextId} />)}
-              {(() => {
-                if (selectedIds.length < 2) return null;
-                const selItems = items.filter(i => selectedIds.includes(i.id));
-                const gid = selItems[0]?.groupId;
-                if (!gid || !selItems.every(i => i.groupId === gid)) return null;
-                const pad = 10;
-                const bounds = selItems.map(i => i.type === "connector"
-                  ? { x: Math.min(i.x1, i.x2, i.elbowX ?? (i.x1+i.x2)/2), y: Math.min(i.y1, i.y2), r: Math.max(i.x1, i.x2, i.elbowX ?? (i.x1+i.x2)/2), b: Math.max(i.y1, i.y2) }
-                  : { x: i.x, y: i.y, r: i.x + i.w, b: i.y + i.h });
-                const minX = Math.min(...bounds.map(b => b.x)) - pad;
-                const minY = Math.min(...bounds.map(b => b.y)) - pad;
-                const maxX = Math.max(...bounds.map(b => b.r)) + pad;
-                const maxY = Math.max(...bounds.map(b => b.b)) + pad;
-                return <div style={{ position: "absolute", left: minX, top: minY, width: maxX - minX, height: maxY - minY, border: "1px dashed rgba(44,132,219,0.3)", borderRadius: 6, pointerEvents: "none" }} />;
-              })()}
             </div>
           </div>
         )}
