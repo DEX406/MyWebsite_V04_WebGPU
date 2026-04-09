@@ -4,8 +4,9 @@
 const MAX_TEXTURES = 200; // max cached textures before eviction kicks in
 
 export class TextureCache {
-  constructor(gl, onTextureReady) {
+  constructor(gl, onTextureReady, opts = {}) {
     this.gl = gl;
+    this.isOffscreen = !!opts.isOffscreen;
     this.cache = new Map(); // url → { tex, width, height, ready, isPlaceholder, insertOrder }
     this.videos = new Map(); // itemId → { video, tex, needsUpdate }
     this.loading = new Set(); // urls currently loading
@@ -70,11 +71,10 @@ export class TextureCache {
     // Start loading
     if (!this.loading.has(url)) {
       this.loading.add(url);
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
+      const onReady = (img, width, height) => {
         this.loading.delete(url);
         const gl = this.gl;
+        const isBitmap = typeof ImageBitmap !== 'undefined' && img instanceof ImageBitmap;
         const tex = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, tex);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
@@ -83,16 +83,32 @@ export class TextureCache {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         this.cache.set(url, {
-          tex, width: img.naturalWidth, height: img.naturalHeight,
+          tex, width, height,
           ready: true, isPlaceholder, insertOrder: this.insertCounter++,
         });
         this._evict();
         if (this._onTextureReady) this._onTextureReady();
-      };
-      img.onerror = () => {
+        if (isBitmap && typeof img.close === 'function') img.close();
+      }
+      const onError = () => {
         this.loading.delete(url);
       };
-      img.src = url;
+      if (this.isOffscreen && typeof createImageBitmap === 'function') {
+        fetch(url, { mode: 'cors' })
+          .then(res => {
+            if (!res.ok) throw new Error(`Failed to load texture: ${res.status}`);
+            return res.blob();
+          })
+          .then(blob => createImageBitmap(blob))
+          .then(bitmap => onReady(bitmap, bitmap.width, bitmap.height))
+          .catch(onError);
+      } else {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => onReady(img, img.naturalWidth, img.naturalHeight);
+        img.onerror = onError;
+        img.src = url;
+      }
     }
 
     return this.fallback;
@@ -137,6 +153,7 @@ export class TextureCache {
   // Get or create a video texture for a video item.
   // Returns { tex, video, width, height, ready }.
   getVideo(itemId, src) {
+    if (this.isOffscreen) return this.transparent;
     let entry = this.videos.get(itemId);
     if (entry && entry.src === src) {
       // Update texture from video frame if playing
