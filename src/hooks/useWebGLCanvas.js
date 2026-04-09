@@ -1,8 +1,8 @@
-// React hook that creates and manages the WebGL renderer.
-// Replaces the DOM-based content layer with a single WebGL canvas.
+// React hook that creates and manages the WebGPU renderer.
+// Replaces the DOM-based content layer with a single GPU-accelerated canvas.
 
 import { useRef, useCallback, useEffect } from 'react';
-import { GLRenderer } from '../webgl/GLRenderer.js';
+import { GPURenderer } from '../webgpu/GPURenderer.js';
 import { hitTest } from '../webgl/hitTest.js';
 
 export function useWebGLCanvas() {
@@ -10,39 +10,58 @@ export function useWebGLCanvas() {
   const rendererRef = useRef(null);
   const rafRef = useRef(0);
   const renderDataRef = useRef(null);
+  const initPromiseRef = useRef(null);
 
-  // Initialize renderer when canvas is available
+  // Async WebGPU initialization
   const initRenderer = useCallback((canvas) => {
-    if (!canvas || rendererRef.current) return;
-    try {
-      const renderer = new GLRenderer(canvas);
-      // When a texture finishes loading async, schedule a repaint so the
-      // canvas updates without waiting for the next user interaction.
-      renderer._onNeedsRedraw = () => {
-        const d = renderDataRef.current;
-        if (!d) return;
-        if (!rafRef.current) {
-          rafRef.current = requestAnimationFrame(() => {
-            rafRef.current = 0;
-            if (rendererRef.current && renderDataRef.current) {
-              rendererRef.current.render(renderDataRef.current);
-            }
-          });
+    if (!canvas || rendererRef.current || initPromiseRef.current) return;
+
+    initPromiseRef.current = (async () => {
+      try {
+        if (!navigator.gpu) {
+          console.error('WebGPU is not supported in this browser.');
+          return;
         }
-      };
-      rendererRef.current = renderer;
-    } catch (e) {
-      console.error('Failed to create WebGL renderer:', e);
-    }
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+          console.error('Failed to get WebGPU adapter.');
+          return;
+        }
+        const device = await adapter.requestDevice();
+        const context = canvas.getContext('webgpu');
+        const format = navigator.gpu.getPreferredCanvasFormat();
+        context.configure({ device, format, alphaMode: 'opaque' });
+
+        const renderer = new GPURenderer(canvas, device, context);
+        renderer._onNeedsRedraw = () => {
+          const d = renderDataRef.current;
+          if (!d) return;
+          if (!rafRef.current) {
+            rafRef.current = requestAnimationFrame(() => {
+              rafRef.current = 0;
+              if (rendererRef.current && renderDataRef.current) {
+                rendererRef.current.render(renderDataRef.current);
+              }
+            });
+          }
+        };
+        rendererRef.current = renderer;
+
+        // If render data arrived while we were initializing, draw now
+        if (renderDataRef.current) {
+          renderer.render(renderDataRef.current);
+        }
+      } catch (e) {
+        console.error('Failed to create WebGPU renderer:', e);
+      }
+    })();
   }, []);
 
-  // Set the canvas ref and init
   const setCanvasRef = useCallback((el) => {
     canvasRef.current = el;
     if (el) initRenderer(el);
   }, [initRenderer]);
 
-  // Schedule a render with the latest data
   const requestRender = useCallback((data) => {
     renderDataRef.current = data;
     if (!rafRef.current) {
@@ -57,7 +76,6 @@ export function useWebGLCanvas() {
     }
   }, []);
 
-  // Synchronous render (for inside existing rAF, e.g. animateTo)
   const renderSync = useCallback((data) => {
     renderDataRef.current = data;
     if (rafRef.current) {
@@ -70,12 +88,10 @@ export function useWebGLCanvas() {
     }
   }, []);
 
-  // Hit test at screen coordinates (relative to canvas)
   const doHitTest = useCallback((screenX, screenY, items, panX, panY, zoom) => {
     return hitTest(screenX, screenY, items, panX, panY, zoom);
   }, []);
 
-  // Invalidate a text item's cached texture
   const invalidateText = useCallback((itemId) => {
     const renderer = rendererRef.current;
     if (renderer) {
@@ -83,7 +99,6 @@ export function useWebGLCanvas() {
     }
   }, []);
 
-  // Cleanup
   useEffect(() => {
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
