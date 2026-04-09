@@ -68,10 +68,19 @@ export class GLRenderer {
     this.gl = gl;
 
     this._onNeedsRedraw = null; // set by consumer to trigger repaint on async texture load
+    const initialImageUploadDelay = Number(window.__IMAGE_UPLOAD_DELAY_MS ?? 0) || 0;
     this.texCache = new TextureCache(gl, () => {
       if (this._onNeedsRedraw) this._onNeedsRedraw();
+    }, {
+      imageUploadDelayMs: initialImageUploadDelay,
     });
-    this.textRenderer = new TextRenderer(gl);
+    const initialTextRasterDelay = Number(window.__TEXT_RASTER_DELAY_MS ?? 0) || 0;
+    this.textRenderer = new TextRenderer(gl, {
+      rasterDelayMs: initialTextRasterDelay,
+      onTextureReady: () => {
+        if (this._onNeedsRedraw) this._onNeedsRedraw();
+      },
+    });
 
     this._initPrograms();
     this._initGeometry();
@@ -387,16 +396,18 @@ export class GLRenderer {
       // Pass 2: glyph alpha mask — skipped while editing (textarea handles text display)
       if (!isEditing) {
         const entry = this.textRenderer.get(item);
-        const textRgba = hexToRgba(item.color || '#C2C0B6');
-        gl.uniform1i(u.u_textured, 0);
-        gl.uniform1i(u.u_textAlpha, 1);
-        gl.uniform4fv(u.u_textColor, textRgba);
-        gl.uniform4f(u.u_texCrop, 0, 0, 1, 1);
-        gl.uniform1i(u.u_hasShadow, 0);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, entry.tex);
-        gl.uniform1i(u.u_tex, 0);
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        if (entry) {
+          const textRgba = hexToRgba(item.color || '#C2C0B6');
+          gl.uniform1i(u.u_textured, 0);
+          gl.uniform1i(u.u_textAlpha, 1);
+          gl.uniform4fv(u.u_textColor, textRgba);
+          gl.uniform4f(u.u_texCrop, 0, 0, 1, 1);
+          gl.uniform1i(u.u_hasShadow, 0);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, entry.tex);
+          gl.uniform1i(u.u_tex, 0);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+        }
       }
 
       gl.uniform1i(u.u_textAlpha, 0);
@@ -635,5 +646,13 @@ export class GLRenderer {
   destroy() {
     this.texCache.destroy();
     this.textRenderer.destroy();
+  }
+
+  setTextRasterDelay(ms) {
+    this.textRenderer.setRasterDelay(ms);
+  }
+
+  setImageUploadDelay(ms) {
+    this.texCache.setImageUploadDelay(ms);
   }
 }
