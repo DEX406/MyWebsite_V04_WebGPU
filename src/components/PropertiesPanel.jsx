@@ -212,7 +212,7 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
         <div style={topRightStyle}>
           <div style={collapseBoxStyle}>
             <button data-ui onClick={() => setCollapsed(!collapsed)} style={collapseButtonStyle} title={collapsed ? "Expand properties" : "Collapse properties"}>
-              {collapsed ? <ChevronDownIcon size={18} /> : <ChevronUpIcon size={18} />}
+              {collapsed ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
             </button>
           </div>
         </div>
@@ -238,7 +238,7 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
         <div style={topRightStyle}>
           <div style={collapseBoxStyle}>
             <button data-ui onClick={() => setCollapsed(!collapsed)} style={collapseButtonStyle} title={collapsed ? "Expand properties" : "Collapse properties"}>
-              {collapsed ? <ChevronDownIcon size={18} /> : <ChevronUpIcon size={18} />}
+              {collapsed ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
             </button>
           </div>
         </div>
@@ -286,7 +286,7 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
         <div style={topRightStyle}>
         <div style={collapseBoxStyle}>
           <button data-ui onClick={() => setCollapsed(!collapsed)} style={collapseButtonStyle} title={collapsed ? "Expand properties" : "Collapse properties"}>
-            {collapsed ? <ChevronDownIcon size={18} /> : <ChevronUpIcon size={18} />}
+            {collapsed ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
           </button>
         </div>
       </div>
