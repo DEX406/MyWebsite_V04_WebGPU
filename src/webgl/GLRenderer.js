@@ -184,9 +184,10 @@ export class GLRenderer {
   }
 
   // Main render call
-  render({ items, panX, panY, zoom, bgGrid, globalShadow, selectedIds, editingTextId }) {
+  render({ items, panX, panY, zoom, pointerWorld = null, bgGrid, globalShadow, selectedIds, editingTextId }) {
     const gl = this.gl;
     const dpr = (window.devicePixelRatio || 1) * SUPERSAMPLE;
+    this.pointerWorld = pointerWorld;
 
     this.resize();
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
@@ -348,7 +349,14 @@ export class GLRenderer {
       for (const c of [target, ...allTiers]) {
         if (c && !seen.has(c)) { seen.add(c); candidates.push(c); }
       }
-      const best = this.texCache.getBestReady(candidates, item.pixelated);
+      const ptr = this.pointerWorld;
+      const cx = item.x + item.w / 2;
+      const cy = item.y + item.h / 2;
+      const distance = ptr ? Math.hypot(cx - ptr.x, cy - ptr.y) : Number.MAX_SAFE_INTEGER;
+      const best = this.texCache.getBestReady(candidates, item.pixelated, {
+        itemId: item.id,
+        distance,
+      });
       const entry = best.entry;
       gl.uniform1i(u.u_textured, 1);
       gl.activeTexture(gl.TEXTURE0);

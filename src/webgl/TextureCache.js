@@ -2,6 +2,9 @@
 // Supports FIFO eviction with placeholder protection — low-res placeholders are evicted last.
 
 const MAX_TEXTURES = 200; // max cached textures before eviction kicks in
+const GLOBAL_IMAGE_UPLOAD_DELAY_MS = 100; // temporary debug delay for CPU->GPU image upload
+const MAX_CONCURRENT_IMAGE_REQUESTS = 1; // throttle request fan-out
+const IMAGE_REQUEST_SPACING_MS = 16; // stagger request starts
 
 export class TextureCache {
   constructor(gl, onTextureReady) {
@@ -9,6 +12,8 @@ export class TextureCache {
     this.cache = new Map(); // url → { tex, width, height, ready, isPlaceholder, insertOrder }
     this.videos = new Map(); // itemId → { video, tex, needsUpdate }
     this.loading = new Set(); // urls currently loading
+    this.pendingLoads = new Map(); // url -> { pixelated, isPlaceholder, score, itemId, distance, neededLevel }
+    this.loadPumpTimer = null;
     this.insertCounter = 0; // monotonic counter for FIFO ordering
     this._onTextureReady = onTextureReady || null; // callback when any texture finishes loading
     // 1x1 transparent fallback texture (used while images load)
@@ -61,25 +66,84 @@ export class TextureCache {
   // Get texture for an image URL. Returns { tex, width, height, ready }.
   // Starts async load if not cached. Returns fallback until ready.
   // isPlaceholder: mark this entry as a low-res placeholder (evicted last)
-  get(url, pixelated = false, isPlaceholder = false) {
+  get(url, pixelated = false, isPlaceholder = false, priority = null) {
     if (!url) return this.transparent;
 
     const cached = this.cache.get(url);
     if (cached) return cached;
 
-    // Start loading
-    if (!this.loading.has(url)) {
-      this.loading.add(url);
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
+    this._enqueueLoad(url, pixelated, isPlaceholder, priority);
+
+    return this.fallback;
+  }
+
+  _enqueueLoad(url, pixelated, isPlaceholder, priority) {
+    if (!url || this.cache.has(url) || this.loading.has(url)) return;
+    const req = this._buildRequest(url, pixelated, isPlaceholder, priority);
+    const prev = this.pendingLoads.get(url);
+    if (!prev || req.score < prev.score) {
+      this.pendingLoads.set(url, req);
+    }
+    this._scheduleLoadPump();
+  }
+
+  _buildRequest(url, pixelated, isPlaceholder, priority) {
+    const distance = Number.isFinite(priority?.distance) ? priority.distance : Number.MAX_SAFE_INTEGER;
+    const neededLevel = Number.isFinite(priority?.neededLevel) ? priority.neededLevel : 99;
+    // lower score = higher priority
+    const score = neededLevel * 1_000_000 + distance + (isPlaceholder ? 250_000 : 0);
+    return {
+      url,
+      pixelated,
+      isPlaceholder,
+      itemId: priority?.itemId ?? null,
+      distance,
+      neededLevel,
+      score,
+    };
+  }
+
+  _scheduleLoadPump() {
+    if (this.loadPumpTimer) return;
+    this.loadPumpTimer = setTimeout(() => {
+      this.loadPumpTimer = null;
+      this._pumpLoads();
+    }, IMAGE_REQUEST_SPACING_MS);
+  }
+
+  _pumpLoads() {
+    if (this.loading.size >= MAX_CONCURRENT_IMAGE_REQUESTS) {
+      this._scheduleLoadPump();
+      return;
+    }
+
+    let best = null;
+    for (const req of this.pendingLoads.values()) {
+      if (!best || req.score < best.score) best = req;
+    }
+    if (best) {
+      this.pendingLoads.delete(best.url);
+      this._startLoad(best.url, best.pixelated, best.isPlaceholder);
+    }
+
+    if (this.pendingLoads.size > 0) this._scheduleLoadPump();
+  }
+
+  _startLoad(url, pixelated, isPlaceholder) {
+    if (!url || this.cache.has(url) || this.loading.has(url)) return;
+    this.loading.add(url);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      setTimeout(() => {
         this.loading.delete(url);
         const gl = this.gl;
         const tex = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, tex);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        const filter = pixelated ? gl.NEAREST : gl.LINEAR;
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         this.cache.set(url, {
@@ -88,21 +152,21 @@ export class TextureCache {
         });
         this._evict();
         if (this._onTextureReady) this._onTextureReady();
-      };
-      img.onerror = () => {
-        this.loading.delete(url);
-      };
-      img.src = url;
-    }
-
-    return this.fallback;
+        this._pumpLoads();
+      }, GLOBAL_IMAGE_UPLOAD_DELAY_MS);
+    };
+    img.onerror = () => {
+      this.loading.delete(url);
+      this._pumpLoads();
+    };
+    img.src = url;
   }
 
   // Get the best available texture from a prioritized list of URLs (best-to-worst).
   // Only kicks off loading for the target (first) and placeholder (last).
   // Checks all intermediate tiers for an already-cached texture to use in the meantime.
   // Returns { entry, url } of the best ready texture, or fallback.
-  getBestReady(candidates, pixelated = false) {
+  getBestReady(candidates, pixelated = false, priority = null) {
     let bestEntry = null;
     let bestUrl = null;
 
@@ -114,7 +178,11 @@ export class TextureCache {
 
       if (isFirst || isLast) {
         // Kick off loading for target (first) and placeholder (last)
-        const entry = this.get(url, pixelated, isLast);
+        const entry = this.get(url, pixelated, isLast, {
+          itemId: priority?.itemId ?? null,
+          distance: priority?.distance,
+          neededLevel: i,
+        });
         if (!bestEntry && entry.ready && entry !== this.fallback && entry !== this.transparent) {
           bestEntry = entry;
           bestUrl = url;
@@ -227,5 +295,7 @@ export class TextureCache {
     gl.deleteTexture(this.transparent.tex);
     this.cache.clear();
     this.videos.clear();
+    this.pendingLoads.clear();
+    if (this.loadPumpTimer) clearTimeout(this.loadPumpTimer);
   }
 }
