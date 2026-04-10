@@ -7,7 +7,9 @@ export class PillRenderer {
   constructor(device) {
     this.device = device;
     this.cache = new Map(); // text → { tex, view, cssWidth, cssHeight }
-    this.canvas = document.createElement('canvas');
+    this.canvas = (typeof document === 'undefined')
+      ? new OffscreenCanvas(1, 1)
+      : document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d');
     this.sampler = device.createSampler({
       minFilter: 'linear',
