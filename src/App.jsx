@@ -19,7 +19,7 @@ import { usePointerInput } from './hooks/usePointerInput.js';
 import { useTouchInput } from './hooks/useTouchInput.js';
 import { useUndo } from './hooks/useUndo.js';
 import { useMipmap } from './hooks/useMipmap.js';
-import { useWebGLCanvas } from './hooks/useWebGLCanvas.js';
+import { useWebGPUCanvas } from './hooks/useWebGPUCanvas.js';
 
 const DEFAULT_PALETTE = ["#C2C0B6", "#30302E", "#262624", "#141413", "#FE8181", "#D97757", "#65BB30", "#2C84DB", "#9B87F5"];
 const COLOR_PROPS = ["color", "bgColor", "borderColor", "lineColor", "dotColor"];
@@ -83,7 +83,7 @@ export default function App() {
   const { canvasRef, canvasHandlesRef, drawBgRef, posDisplayRef, zoomDisplayRef, applyTransform, updateDisplays, viewCenter, zoomTo, animateTo, goHome, setHome } = vp;
 
   // ── WebGL renderer ──
-  const webgl = useWebGLCanvas();
+  const webgl = useWebGPUCanvas();
 
   // Wire up WebGL render trigger — called on every viewport change (pan/zoom/resize)
   useEffect(() => {
@@ -610,7 +610,7 @@ export default function App() {
       <div ref={canvasRef} onPointerDown={handlePointerDown}
         style={{ width: "100%", height: "100%", cursor: dragging ? "move" : rotating ? "grabbing" : "grab", position: "relative", overflow: "hidden", touchAction: "none", zIndex: Z.CANVAS, isolation: "isolate" }}>
 
-        {/* WebGL canvas — renders grid + all content items */}
+        {/* WebGPU canvas — renders grid + all content items */}
         <canvas ref={webgl.setCanvasRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", imageRendering: "auto" }} />
 
         {isAdmin && (
