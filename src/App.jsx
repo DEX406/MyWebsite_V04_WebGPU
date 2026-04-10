@@ -12,7 +12,7 @@ import { Toolbar } from './components/Toolbar.jsx';
 import { ColorPickerPopup } from './components/ColorPickerPopup.jsx';
 import { LoginModal } from './components/LoginModal.jsx';
 import { loadBoard, saveBoard, cleanupFiles, uploadImage, uploadVideo, login, logout, hasToken, getBackupManifest, restoreImageKey, downloadImageViaProxy, serverResize } from './api.js';
-import { convertVideoToWebm, isVideoFile } from './videoUtils.js';
+import { convertVideoToWebm, getVideoMetadata, isVideoFile, shouldTranscodeOnClient } from './videoUtils.js';
 import { useViewport } from './hooks/useViewport.js';
 import { useKeyboard } from './hooks/useKeyboard.js';
 import { usePointerInput } from './hooks/usePointerInput.js';
@@ -337,13 +337,30 @@ export default function App() {
       await Promise.all(batch.map(async (file) => {
         try {
           if (isVideoFile(file)) {
-            setUploadStatus(`Converting video${total > 1 ? ` (${done + 1}/${total})` : ''}...`);
-            const { blob, width, height } = await convertVideoToWebm(file, (progress) => {
-              setUploadStatus(`Converting video ${Math.round(progress * 100)}%${total > 1 ? ` (${done + 1}/${total})` : ''}`);
-            });
+            let blobToUpload = file;
+            let uploadFilename = file.name;
+            let uploadContentType = file.type || 'application/octet-stream';
+            let width;
+            let height;
+
+            if (shouldTranscodeOnClient()) {
+              setUploadStatus(`Converting video${total > 1 ? ` (${done + 1}/${total})` : ''}...`);
+              const converted = await convertVideoToWebm(file, (progress) => {
+                setUploadStatus(`Converting video ${Math.round(progress * 100)}%${total > 1 ? ` (${done + 1}/${total})` : ''}`);
+              });
+              blobToUpload = converted.blob;
+              width = converted.width;
+              height = converted.height;
+              uploadFilename = file.name.replace(/\.[^.]+$/, '.webm');
+              uploadContentType = 'video/webm';
+            } else {
+              const meta = await getVideoMetadata(file);
+              width = meta.width;
+              height = meta.height;
+            }
+
             setUploadStatus(`Uploading video${total > 1 ? ` (${done + 1}/${total})` : ''}...`);
-            const webmFilename = file.name.replace(/\.[^.]+$/, '.webm');
-            const { url } = await uploadVideo(blob, webmFilename);
+            const { url } = await uploadVideo(blobToUpload, uploadFilename, uploadContentType);
             const fit = fitTo512(width, height);
             const w = snap(fit.w, true), h = snap(fit.h, true);
             const c = viewCenter();
