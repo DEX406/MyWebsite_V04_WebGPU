@@ -89,26 +89,52 @@ export class TextureCache {
 
     if (!this.loading.has(url)) {
       this.loading.add(url);
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        this.loading.delete(url);
-        const tex = this._createFromSource(img, img.naturalWidth, img.naturalHeight);
-        const entry = {
-          tex,
-          view: tex.createView(),
-          width: img.naturalWidth,
-          height: img.naturalHeight,
-          ready: true,
-          isPlaceholder,
-          insertOrder: this.insertCounter++,
+      if (typeof Image !== 'undefined') {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          this.loading.delete(url);
+          const tex = this._createFromSource(img, img.naturalWidth, img.naturalHeight);
+          const entry = {
+            tex,
+            view: tex.createView(),
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+            ready: true,
+            isPlaceholder,
+            insertOrder: this.insertCounter++,
+          };
+          this.cache.set(url, entry);
+          this._evict();
+          if (this._onTextureReady) this._onTextureReady();
         };
-        this.cache.set(url, entry);
-        this._evict();
-        if (this._onTextureReady) this._onTextureReady();
-      };
-      img.onerror = () => { this.loading.delete(url); };
-      img.src = url;
+        img.onerror = () => { this.loading.delete(url); };
+        img.src = url;
+      } else {
+        fetch(url)
+          .then(r => r.blob())
+          .then(createImageBitmap)
+          .then((bitmap) => {
+            this.loading.delete(url);
+            const tex = this._createFromSource(bitmap, bitmap.width, bitmap.height);
+            const entry = {
+              tex,
+              view: tex.createView(),
+              width: bitmap.width,
+              height: bitmap.height,
+              ready: true,
+              isPlaceholder,
+              insertOrder: this.insertCounter++,
+            };
+            this.cache.set(url, entry);
+            this._evict();
+            if (this._onTextureReady) this._onTextureReady();
+            if (typeof bitmap.close === 'function') bitmap.close();
+          })
+          .catch(() => {
+            this.loading.delete(url);
+          });
+      }
     }
 
     return this.fallback;
@@ -140,6 +166,9 @@ export class TextureCache {
   }
 
   getVideo(itemId, src) {
+    if (typeof document === 'undefined') {
+      return this.fallback;
+    }
     let entry = this.videos.get(itemId);
     if (entry && entry.src === src) {
       if (entry.video.readyState >= 2) {
