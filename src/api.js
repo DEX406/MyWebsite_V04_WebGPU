@@ -169,11 +169,11 @@ export async function uploadImage(file) {
   return { url };
 }
 
-export async function uploadVideo(blob, filename) {
+export async function uploadVideo(blob, filename, contentType = 'video/webm') {
   const res = await fetch('/api/upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ filename, contentType: 'video/webm' }),
+    body: JSON.stringify({ filename, contentType }),
   });
 
   if (!res.ok) {
@@ -185,7 +185,7 @@ export async function uploadVideo(blob, filename) {
 
   const upload = await fetch(uploadUrl, {
     method: 'PUT',
-    headers: { 'Content-Type': 'video/webm' },
+    headers: { 'Content-Type': contentType },
     body: blob,
   });
 

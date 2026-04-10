@@ -2,6 +2,7 @@
 // Supports FIFO eviction with placeholder protection — low-res placeholders are evicted last.
 
 const MAX_TEXTURES = 200;
+const MAX_VIDEO_TEXTURE_SIDE = 1024;
 
 export class TextureCache {
   constructor(device, onTextureReady) {
@@ -29,6 +30,13 @@ export class TextureCache {
     // 1x1 fallback textures
     this.fallback = this._create1x1([0, 0, 0, 0]);
     this.transparent = this._create1x1([0, 0, 0, 0]);
+  }
+
+  _fitVideoTextureSize(srcW, srcH) {
+    if (!srcW || !srcH) return [1, 1];
+    if (srcW <= MAX_VIDEO_TEXTURE_SIDE && srcH <= MAX_VIDEO_TEXTURE_SIDE) return [srcW, srcH];
+    const scale = Math.min(MAX_VIDEO_TEXTURE_SIDE / srcW, MAX_VIDEO_TEXTURE_SIDE / srcH);
+    return [Math.max(1, Math.round(srcW * scale)), Math.max(1, Math.round(srcH * scale))];
   }
 
   _create1x1(rgba) {
@@ -143,25 +151,32 @@ export class TextureCache {
     let entry = this.videos.get(itemId);
     if (entry && entry.src === src) {
       if (entry.video.readyState >= 2) {
-        // Re-create texture each frame from video (copyExternalImageToTexture requires matching size)
+        // Keep video textures capped to avoid mobile GPU OOM crashes on high-res videos.
         const vw = entry.video.videoWidth;
         const vh = entry.video.videoHeight;
         if (vw > 0 && vh > 0) {
-          // Reuse texture if same size, otherwise recreate
-          if (entry.width !== vw || entry.height !== vh) {
+          const [tw, th] = this._fitVideoTextureSize(vw, vh);
+          if (!entry.ctx) return entry;
+          if (entry.canvas.width !== tw || entry.canvas.height !== th) {
+            entry.canvas.width = tw;
+            entry.canvas.height = th;
+          }
+          entry.ctx.drawImage(entry.video, 0, 0, tw, th);
+          // Reuse texture if same size, otherwise recreate.
+          if (entry.width !== tw || entry.height !== th) {
             entry.tex.destroy();
-            entry.tex = this._createFromSource(entry.video, vw, vh);
+            entry.tex = this._createFromSource(entry.canvas, tw, th);
             entry.view = entry.tex.createView();
           } else {
             this.device.queue.copyExternalImageToTexture(
-              { source: entry.video, flipY: false },
+              { source: entry.canvas, flipY: false },
               { texture: entry.tex },
-              [vw, vh],
+              [tw, th],
             );
           }
           entry.ready = true;
-          entry.width = vw;
-          entry.height = vh;
+          entry.width = tw;
+          entry.height = th;
         }
       }
       return entry;
@@ -182,11 +197,17 @@ export class TextureCache {
     video.playsInline = true;
     video.src = src;
     video.play().catch(() => {});
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    const ctx = canvas.getContext('2d', { alpha: true });
 
     // Start with 1x1 black placeholder
     const tex1 = this._create1x1([0, 0, 0, 255]);
     const newEntry = {
       video,
+      canvas,
+      ctx,
       tex: tex1.tex,
       view: tex1.view,
       src,

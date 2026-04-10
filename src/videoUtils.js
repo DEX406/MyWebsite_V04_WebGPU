@@ -1,5 +1,54 @@
 const MAX_LONG_SIDE = 1024;
 
+function isLikelyMobileDevice() {
+  const ua = navigator.userAgent || '';
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+}
+
+function canClientTranscode() {
+  if (typeof MediaRecorder === 'undefined') return false;
+  if (typeof HTMLCanvasElement === 'undefined') return false;
+  if (!HTMLCanvasElement.prototype.captureStream) return false;
+  return true;
+}
+
+export function shouldTranscodeOnClient() {
+  if (!canClientTranscode()) return false;
+  // iOS Safari is especially memory-constrained for canvas+MediaRecorder pipelines.
+  if (isLikelyMobileDevice()) return false;
+  const mem = navigator.deviceMemory || 0;
+  if (mem && mem <= 4) return false;
+  return true;
+}
+
+export function getVideoMetadata(file) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    video.playsInline = true;
+    const objectUrl = URL.createObjectURL(file);
+    const cleanup = () => URL.revokeObjectURL(objectUrl);
+
+    video.onloadedmetadata = () => {
+      const { videoWidth, videoHeight } = video;
+      cleanup();
+      if (!videoWidth || !videoHeight) {
+        reject(new Error('Could not read video dimensions'));
+        return;
+      }
+      resolve({ width: videoWidth, height: videoHeight });
+    };
+
+    video.onerror = () => {
+      cleanup();
+      reject(new Error('Failed to load video metadata'));
+    };
+
+    video.src = objectUrl;
+  });
+}
+
 /**
  * Convert a video file to WEBM format, scaled so the long side is at most 1024px.
  * Uses canvas + MediaRecorder for client-side conversion with high bitrate.
