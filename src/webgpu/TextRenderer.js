@@ -5,11 +5,14 @@
 import { TEXT_PAD_X, TEXT_PAD_Y, TEXT_LINE_HEIGHT, TEXT_DEFAULT_SIZE, FONT } from '../constants.js';
 
 export class TextRenderer {
-  constructor(device) {
+  constructor(device, options = {}) {
     this.device = device;
+    this.options = options;
+    this.isWorkerMode = typeof document === 'undefined';
     this.cache = new Map();    // key → { tex, view, width, height, lastUsed }
     this.itemKeys = new Map(); // itemId → current cache key
-    this.canvas = document.createElement('canvas');
+    this.pending = new Set();
+    this.canvas = this.isWorkerMode ? new OffscreenCanvas(1, 1) : document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d');
     this.sampler = device.createSampler({
       minFilter: 'linear',
@@ -42,12 +45,52 @@ export class TextRenderer {
       return cached;
     }
 
+    if (this.isWorkerMode) {
+      if (!this.pending.has(key) && this.options.requestRaster) {
+        this.pending.add(key);
+        this.options.requestRaster(item, key);
+      }
+      return null;
+    }
+
     const entry = this._render(item);
     entry.lastUsed = performance.now();
     this.cache.set(key, entry);
     this.itemKeys.set(item.id, key);
 
     if (this.cache.size > 200) this._evict();
+    return entry;
+  }
+
+  uploadExternal(item, key, bitmap, width, height) {
+    const prevKey = this.itemKeys.get(item.id);
+    if (prevKey && prevKey !== key) {
+      const old = this.cache.get(prevKey);
+      if (old) {
+        old.tex.destroy();
+        this.cache.delete(prevKey);
+      }
+    }
+
+    const existing = this.cache.get(key);
+    if (existing) return existing;
+
+    const tex = this.device.createTexture({
+      size: [width, height],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.device.queue.copyExternalImageToTexture(
+      { source: bitmap, flipY: false },
+      { texture: tex },
+      [width, height],
+    );
+
+    const entry = { tex, view: tex.createView(), width, height, lastUsed: performance.now() };
+    this.cache.set(key, entry);
+    this.itemKeys.set(item.id, key);
+    this.pending.delete(key);
+    if (this.options.onTextureReady) this.options.onTextureReady();
     return entry;
   }
 

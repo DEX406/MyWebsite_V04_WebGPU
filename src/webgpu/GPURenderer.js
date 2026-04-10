@@ -20,17 +20,24 @@ const MAX_LINE_DRAWS = 512;
 const MAX_CIRCLE_DRAWS = 1024;
 
 export class GPURenderer {
-  constructor(canvas, device, context) {
+  constructor(canvas, device, context, options = {}) {
     this.canvas = canvas;
     this.device = device;
     this.context = context;
+    this.options = options;
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this._onNeedsRedraw = null;
+    this._dprBase = options.devicePixelRatio || (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
 
     this.texCache = new TextureCache(device, () => {
       if (this._onNeedsRedraw) this._onNeedsRedraw();
     });
-    this.textRenderer = new TextRenderer(device);
+    this.textRenderer = new TextRenderer(device, {
+      requestRaster: options.requestTextRaster,
+      onTextureReady: () => {
+        if (this._onNeedsRedraw) this._onNeedsRedraw();
+      },
+    });
     this.pillRenderer = new PillRenderer(device);
 
     this._align = Math.max(256, device.limits.minUniformBufferOffsetAlignment);
@@ -159,14 +166,15 @@ export class GPURenderer {
 
   // ── Resize ─────────────────────────────────────────────────────────────────
 
-  resize() {
-    const dpr = (window.devicePixelRatio || 1) * SUPERSAMPLE;
-    const parent = this.canvas.parentElement;
-    if (!parent) return;
-    const w = parent.clientWidth;
-    const h = parent.clientHeight;
-    this.canvas.style.width = w + 'px';
-    this.canvas.style.height = h + 'px';
+  resize(cssWidth, cssHeight) {
+    const dpr = this._dprBase * SUPERSAMPLE;
+    const hasDOM = typeof window !== 'undefined' && this.canvas?.parentElement;
+    const w = cssWidth ?? (hasDOM ? this.canvas.parentElement.clientWidth : this.canvas.width / dpr);
+    const h = cssHeight ?? (hasDOM ? this.canvas.parentElement.clientHeight : this.canvas.height / dpr);
+    if (hasDOM) {
+      this.canvas.style.width = w + 'px';
+      this.canvas.style.height = h + 'px';
+    }
     const pw = Math.round(w * dpr);
     const ph = Math.round(h * dpr);
     if (this.canvas.width !== pw || this.canvas.height !== ph) {
@@ -182,12 +190,12 @@ export class GPURenderer {
 
   // ── Main render ────────────────────────────────────────────────────────────
 
-  render({ items, panX, panY, zoom, bgGrid, globalShadow, selectedIds, editingTextId }) {
+  render({ items, panX, panY, zoom, bgGrid, globalShadow, selectedIds, editingTextId, cssWidth, cssHeight }) {
     const device = this.device;
-    const dpr = (window.devicePixelRatio || 1) * SUPERSAMPLE;
+    const dpr = this._dprBase * SUPERSAMPLE;
     const A = this._align;
 
-    this.resize();
+    this.resize(cssWidth, cssHeight);
 
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
@@ -522,13 +530,14 @@ export class GPURenderer {
       texView = entry.view;
     } else if (item.type === 'video') {
       const entry = this.texCache.getVideo(item.id, item.src);
-      u[33] = entry.ready ? 1 : 0;
-      const texW = entry.width || item.naturalWidth || item.w;
-      const texH = entry.height || item.naturalHeight || item.h;
+      const isReady = !!entry?.ready;
+      u[33] = isReady ? 1 : 0;
+      const texW = entry?.width || item.naturalWidth || item.w;
+      const texH = entry?.height || item.naturalHeight || item.h;
       const crop = this.texCache.coverUV(texW, texH, item.w, item.h);
       u[20] = crop[0]; u[21] = crop[1]; u[22] = crop[2]; u[23] = crop[3];
       u.set([0, 0, 0, 1], 16); // color black
-      texView = entry.view;
+      texView = entry?.view || null;
     } else if (item.type === 'text' || item.type === 'link') {
       const isEditing = editingTextId === item.id;
       const bgColor = this._getBgColor(item);
@@ -544,6 +553,7 @@ export class GPURenderer {
       // Pass 2: glyph mask (skip during editing)
       if (!isEditing) {
         const entry = this.textRenderer.get(item);
+        if (!entry) return;
         const textRgba = hexToRgba(item.color || '#C2C0B6');
         const u2 = new Float32Array(u);
         u2[33] = 0; // not textured (using textAlpha mode)
@@ -948,5 +958,9 @@ export class GPURenderer {
     this.texCache.destroy();
     this.textRenderer.destroy();
     this.pillRenderer.destroy();
+  }
+
+  uploadTextBitmap(payload) {
+    this.textRenderer.uploadExternal(payload.item, payload.key, payload.bitmap, payload.width, payload.height);
   }
 }
