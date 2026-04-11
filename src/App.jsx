@@ -68,6 +68,8 @@ export default function App() {
   const isAdminRef = useRef(isAdmin); isAdminRef.current = isAdmin;
   const selectedIdsRef = useRef(selectedIds); selectedIdsRef.current = selectedIds;
   const draggingRef = useRef(dragging); draggingRef.current = dragging;
+  const dragDeltaRef = useRef(null);  // {dx, dy} in world coords, bypasses React during drag
+  const itemOverrideRef = useRef(null);  // {id, props} for resize/rotate/connector, bypasses React
   const resizingRef = useRef(resizing); resizingRef.current = resizing;
   const rotatingRef = useRef(rotating); rotatingRef.current = rotating;
   const editingConnectorRef = useRef(editingConnector); editingConnectorRef.current = editingConnector;
@@ -88,8 +90,31 @@ export default function App() {
   // Wire up WebGL render trigger — called on every viewport change (pan/zoom/resize)
   useEffect(() => {
     drawBgRef.current = () => {
+      let renderItems = itemsRef.current;
+      // During active gestures, apply offsets directly to items for immediate GPU rendering
+      // (bypasses React state for zero-latency touch response)
+      const drag = draggingRef.current;
+      const delta = dragDeltaRef.current;
+      const override = itemOverrideRef.current;
+      if (drag && delta) {
+        const es = effectiveSnapRef.current;
+        renderItems = renderItems.map(i => {
+          const start = drag.itemsStartMap?.get(i.id);
+          if (!start) return i;
+          if (i.type === 'connector') {
+            return { ...i,
+              x1: snap(start.x1 + delta.dx, es), y1: snap(start.y1 + delta.dy, es),
+              x2: snap(start.x2 + delta.dx, es), y2: snap(start.y2 + delta.dy, es),
+              elbowX: snap(start.elbowX + delta.dx, es), elbowY: snap(start.elbowY + delta.dy, es),
+            };
+          }
+          return { ...i, x: snap(start.x + delta.dx, es), y: snap(start.y + delta.dy, es) };
+        });
+      } else if (override) {
+        renderItems = renderItems.map(i => i.id === override.id ? { ...i, ...override.props } : i);
+      }
       webgl.renderSync({
-        items: itemsRef.current,
+        items: renderItems,
         panX: vp.panRef.current.x,
         panY: vp.panRef.current.y,
         zoom: vp.zoomRef.current,
@@ -272,7 +297,7 @@ export default function App() {
     draggingRef, setDragging, resizingRef, setResizing,
     rotatingRef, setRotating, editingConnectorRef, setEditingConnector,
     setEditingTextId, effectiveSnapRef, scheduleSave, animateTo, pushUndo,
-    doHitTest: webgl.doHitTest, setBoxSelect,
+    doHitTest: webgl.doHitTest, setBoxSelect, dragDeltaRef, itemOverrideRef,
   });
 
   useTouchInput({
@@ -281,7 +306,7 @@ export default function App() {
     setDragging, draggingRef, effectiveSnapRef,
     scheduleSave, animateTo, pushUndo,
     multiSelectModeRef, setMultiSelectMode,
-    doHitTest: webgl.doHitTest,
+    doHitTest: webgl.doHitTest, dragDeltaRef, itemOverrideRef,
   });
 
   useKeyboard({

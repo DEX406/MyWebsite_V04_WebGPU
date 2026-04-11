@@ -14,8 +14,9 @@ export function usePointerInput({
   scheduleSave, animateTo, pushUndo,
   doHitTest,
   setBoxSelect,
+  dragDeltaRef, itemOverrideRef,
 }) {
-  const { panRef, zoomRef, isPanningRef, panStartRef, canvasRef, applyTransform, updateDisplays } = vp;
+  const { panRef, zoomRef, isPanningRef, panStartRef, canvasRef, drawBgRef, applyTransform, updateDisplays } = vp;
   const lastClickRef = useRef({ time: 0, itemId: null });
   const boxSelectRef = useRef(null);
   const itemsRef = useRef(items);
@@ -99,7 +100,7 @@ export function usePointerInput({
           : (item.groupId ? items.filter(i => i.groupId === item.groupId).map(i => i.id) : [id]);
         if (!alreadySelected) setSelectedIds(dragIds);
         pushUndo(items);
-        setDragging({
+        const dragInfo = {
           ids: dragIds,
           startX: e.clientX, startY: e.clientY,
           itemsStartMap: new Map(items.filter(i => dragIds.includes(i.id)).map(i => [i.id, {
@@ -107,7 +108,9 @@ export function usePointerInput({
             x1: i.x1, y1: i.y1, x2: i.x2, y2: i.y2,
             elbowX: i.elbowX, elbowY: i.elbowY
           }])),
-        });
+        };
+        setDragging(dragInfo);
+        draggingRef.current = dragInfo;
       }
 
       if (action === "resize") {
@@ -156,58 +159,53 @@ export function usePointerInput({
     if (drag) {
       const dx = (e.clientX - drag.startX) / zoomRef.current;
       const dy = (e.clientY - drag.startY) / zoomRef.current;
-      setItems(p => p.map(i => {
-        const start = drag.itemsStartMap.get(i.id);
-        if (!start) return i;
-        if (i.type === "connector") {
-          return { ...i,
-            x1: snap(start.x1 + dx, es), y1: snap(start.y1 + dy, es),
-            x2: snap(start.x2 + dx, es), y2: snap(start.y2 + dy, es),
-            elbowX: snap(start.elbowX + dx, es),
-            elbowY: snap(start.elbowY + dy, es),
-          };
-        }
-        return { ...i, x: snap(start.x + dx, es), y: snap(start.y + dy, es) };
-      }));
+      dragDeltaRef.current = { dx, dy };
+      if (drawBgRef.current) drawBgRef.current();
     } else if (ec) {
       const dx = (e.clientX - ec.startX) / zoomRef.current;
       const dy = (e.clientY - ec.startY) / zoomRef.current;
       const si = ec.startItem;
-      setItems(p => p.map(i => {
-        if (i.id !== ec.id) return i;
-        if (ec.handle === "ep1") return { ...i, x1: snap(si.x1 + dx, es), y1: snap(si.y1 + dy, es) };
-        if (ec.handle === "ep2") return { ...i, x2: snap(si.x2 + dx, es), y2: snap(si.y2 + dy, es) };
-        if (ec.handle === "elbow") {
-          const newElbowX = snap(si.elbowX + dx, es);
-          const newElbowY = snap(si.elbowY + dy, es);
-          const midX = (i.x1 + i.x2) / 2;
-          const midY = (i.y1 + i.y2) / 2;
-          const hSpan = Math.abs(i.x2 - i.x1);
-          const vSpan = Math.abs(i.y2 - i.y1);
-          let orientation = i.orientation || "h";
-          if (orientation === "h") {
-            const distFromMidY = Math.abs(newElbowY - midY);
-            const distFromMidX = Math.abs(newElbowX - midX);
-            if (distFromMidY > vSpan * 0.35 + 20 && distFromMidY > distFromMidX) orientation = "v";
-          } else {
-            const distFromMidX = Math.abs(newElbowX - midX);
-            const distFromMidY = Math.abs(newElbowY - midY);
-            if (distFromMidX > hSpan * 0.35 + 20 && distFromMidX > distFromMidY) orientation = "h";
-          }
-          return { ...i, elbowX: newElbowX, elbowY: newElbowY, orientation };
+      let props;
+      if (ec.handle === "ep1") {
+        props = { x1: snap(si.x1 + dx, es), y1: snap(si.y1 + dy, es) };
+      } else if (ec.handle === "ep2") {
+        props = { x2: snap(si.x2 + dx, es), y2: snap(si.y2 + dy, es) };
+      } else if (ec.handle === "elbow") {
+        const item = items.find(i => i.id === ec.id);
+        const newElbowX = snap(si.elbowX + dx, es);
+        const newElbowY = snap(si.elbowY + dy, es);
+        const midX = (item.x1 + item.x2) / 2;
+        const midY = (item.y1 + item.y2) / 2;
+        const hSpan = Math.abs(item.x2 - item.x1);
+        const vSpan = Math.abs(item.y2 - item.y1);
+        let orientation = item.orientation || "h";
+        if (orientation === "h") {
+          const distFromMidY = Math.abs(newElbowY - midY);
+          const distFromMidX = Math.abs(newElbowX - midX);
+          if (distFromMidY > vSpan * 0.35 + 20 && distFromMidY > distFromMidX) orientation = "v";
+        } else {
+          const distFromMidX = Math.abs(newElbowX - midX);
+          const distFromMidY = Math.abs(newElbowY - midY);
+          if (distFromMidX > hSpan * 0.35 + 20 && distFromMidX > distFromMidY) orientation = "h";
         }
-        return i;
-      }));
+        props = { elbowX: newElbowX, elbowY: newElbowY, orientation };
+      }
+      if (props) {
+        itemOverrideRef.current = { id: ec.id, props };
+        if (drawBgRef.current) drawBgRef.current();
+      }
     } else if (rsz) {
       const dx = (e.clientX - rsz.startX) / zoomRef.current;
       const dy = (e.clientY - rsz.startY) / zoomRef.current;
       const r = computeResize(rsz.item, rsz.handle, dx, dy, es);
-      setItems(p => p.map(i => i.id === rsz.id ? { ...i, x: r.x, y: r.y, w: r.w, h: r.h } : i));
+      itemOverrideRef.current = { id: rsz.id, props: { x: r.x, y: r.y, w: r.w, h: r.h } };
+      if (drawBgRef.current) drawBgRef.current();
     } else if (rot) {
       const mouseAngle = Math.atan2(e.clientY - rot.centerY, e.clientX - rot.centerX) * 180 / Math.PI;
       const deltaAngle = mouseAngle - rot.startMouseAngle;
       const newAngle = snapAngle(rot.startAngle + deltaAngle, es);
-      setItems(p => p.map(i => i.id === rot.id ? { ...i, rotation: newAngle } : i));
+      itemOverrideRef.current = { id: rot.id, props: { rotation: newAngle } };
+      if (drawBgRef.current) drawBgRef.current();
     } else if (isPanningRef.current) {
       panRef.current = { x: e.clientX - panStartRef.current.x, y: e.clientY - panStartRef.current.y };
       applyTransform();
@@ -244,6 +242,30 @@ export function usePointerInput({
         .map(i => i.id);
       if (hitIds.length > 0) setSelectedIds(hitIds);
       return;
+    }
+    // Commit in-flight GPU overrides to React state
+    if (draggingRef.current && dragDeltaRef.current) {
+      const delta = dragDeltaRef.current;
+      const drag = draggingRef.current;
+      const es = effectiveSnapRef.current;
+      setItems(p => p.map(i => {
+        const start = drag.itemsStartMap?.get(i.id);
+        if (!start) return i;
+        if (i.type === 'connector') {
+          return { ...i,
+            x1: snap(start.x1 + delta.dx, es), y1: snap(start.y1 + delta.dy, es),
+            x2: snap(start.x2 + delta.dx, es), y2: snap(start.y2 + delta.dy, es),
+            elbowX: snap(start.elbowX + delta.dx, es), elbowY: snap(start.elbowY + delta.dy, es),
+          };
+        }
+        return { ...i, x: snap(start.x + delta.dx, es), y: snap(start.y + delta.dy, es) };
+      }));
+      dragDeltaRef.current = null;
+    }
+    if ((resizingRef.current || rotatingRef.current || editingConnectorRef.current) && itemOverrideRef.current) {
+      const ov = itemOverrideRef.current;
+      setItems(p => p.map(i => i.id === ov.id ? { ...i, ...ov.props } : i));
+      itemOverrideRef.current = null;
     }
     if (draggingRef.current || resizingRef.current || rotatingRef.current || editingConnectorRef.current) scheduleSave();
     setDragging(null);
