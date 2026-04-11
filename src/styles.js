@@ -36,6 +36,9 @@ export const tbSep = { width: 1, height: 16, background: "rgba(194,192,182,0.07)
 // Small toggle button used inside panels and dropdowns
 export const togBtn = { width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid rgba(194,192,182,0.08)", borderRadius: 5, color: "rgba(194,192,182,0.6)", cursor: "pointer", fontSize: 12, fontFamily: "'DM Sans', sans-serif", background: "rgba(194,192,182,0.04)" };
 
+// Checkerboard pattern shown behind transparent color swatches
+export const CHECKER_BG = "repeating-conic-gradient(#30302E 0% 25%, #1F1E1D 0% 50%) 0 0 / 8px 8px";
+
 // Shared info text style for zoom %, XY coords, selection count
 export const infoText = { color: "rgba(194,192,182,0.28)", fontSize: 11, fontWeight: 500, letterSpacing: "0.03em", userSelect: "none", whiteSpace: "nowrap" };
 

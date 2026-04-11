@@ -334,6 +334,15 @@ export default function App() {
     });
   };
 
+  // Add a GIF with a 320×240 placeholder, then load real dimensions in background
+  const addGifToCanvas = (url, opts = {}) => {
+    const id = uid();
+    const c = viewCenter();
+    const defaultW = snap(320, true), defaultH = snap(240, true);
+    setItemsAndSave(p => [...p, { id, type: "image", src: url, x: snap(c.x - defaultW / 2, true), y: snap(c.y - defaultH / 2, true), w: defaultW, h: defaultH, z: maxZ(p) + 1, radius: 2, rotation: 0 }]);
+    addImageToCanvas(url, { id, ...opts });
+  };
+
   const handleFilesRef = useRef(null);
 
   const handleFiles = async (files) => {
@@ -370,11 +379,7 @@ export default function App() {
             const isGif = file.type === "image/gif";
             const { url } = await uploadImage(file);
             if (isGif) {
-              const id = uid();
-              const c = viewCenter();
-              const defaultW = snap(320, true), defaultH = snap(240, true);
-              setItemsAndSave(p => [...p, { id, type: "image", src: url, x: snap(c.x - defaultW / 2, true), y: snap(c.y - defaultH / 2, true), w: defaultW, h: defaultH, z: maxZ(p) + 1, radius: 2, rotation: 0 }]);
-              addImageToCanvas(url, { id });
+              addGifToCanvas(url);
             } else {
               await addImageToCanvas(url);
             }
@@ -469,11 +474,7 @@ export default function App() {
       const isGif = /\.gif(\?|$)/i.test(url);
       const onError = () => { setUploadStatus(`Failed to load ${isGif ? "GIF" : "image"} from URL`); setTimeout(() => setUploadStatus(""), 4000); };
       if (isGif) {
-        const id = uid();
-        const c = viewCenter();
-        const defaultW = snap(320, true), defaultH = snap(240, true);
-        setItemsAndSave(p => [...p, { id, type: "image", src: url, x: snap(c.x - defaultW / 2, true), y: snap(c.y - defaultH / 2, true), w: defaultW, h: defaultH, z: maxZ(p) + 1, radius: 2, rotation: 0 }]);
-        addImageToCanvas(url, { id, onError });
+        addGifToCanvas(url, { onError });
       } else {
         addImageToCanvas(url, { onError });
       }
