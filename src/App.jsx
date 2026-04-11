@@ -3,7 +3,7 @@ import { ZoomInIcon, ZoomOutIcon, GridIcon, HomeIcon, FloppyIcon, UndoIcon, Redo
 
 import { FONT, FONTS, DEFAULT_BG_GRID } from './constants.js';
 import { loadConfiguredFonts } from './fontLibrary.js';
-import { uid, snap, applyBg, isTyping, pasteItems, migrateItems } from './utils.js';
+import { uid, snap, applyBg, isTyping, pasteItems, migrateItems, applyDragDelta } from './utils.js';
 import { createBackupZip, restoreFromZip } from './backupRestore.js';
 import { tbBtn, tbSurface, tbSep, togBtn, infoText, panelSurface, UI_BG, UI_BORDER, Z } from './styles.js';
 import { CanvasItem } from './components/CanvasItem.jsx';
@@ -97,19 +97,7 @@ export default function App() {
       const delta = dragDeltaRef.current;
       const override = itemOverrideRef.current;
       if (drag && delta) {
-        const es = effectiveSnapRef.current;
-        renderItems = renderItems.map(i => {
-          const start = drag.itemsStartMap?.get(i.id);
-          if (!start) return i;
-          if (i.type === 'connector') {
-            return { ...i,
-              x1: snap(start.x1 + delta.dx, es), y1: snap(start.y1 + delta.dy, es),
-              x2: snap(start.x2 + delta.dx, es), y2: snap(start.y2 + delta.dy, es),
-              elbowX: snap(start.elbowX + delta.dx, es), elbowY: snap(start.elbowY + delta.dy, es),
-            };
-          }
-          return { ...i, x: snap(start.x + delta.dx, es), y: snap(start.y + delta.dy, es) };
-        });
+        renderItems = applyDragDelta(renderItems, drag.itemsStartMap, delta.dx, delta.dy, effectiveSnapRef.current);
       } else if (override) {
         renderItems = renderItems.map(i => i.id === override.id ? { ...i, ...override.props } : i);
       }

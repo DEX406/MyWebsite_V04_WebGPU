@@ -1,5 +1,5 @@
 import { useRef, useCallback, useEffect } from 'react';
-import { snap, snapAngle, computeResize } from '../utils.js';
+import { snap, snapAngle, computeResize, applyDragDelta, computeElbowOrientation } from '../utils.js';
 import { MIN_ZOOM, MAX_ZOOM } from './useViewport.js';
 
 const TOUCH_TAP_THRESHOLD = 10;
@@ -230,21 +230,7 @@ export function useTouchInput({
           const item = itemsRef.current.find(i => i.id === si.id);
           const newElbowX = snap(si.elbowX + ddx, es);
           const newElbowY = snap(si.elbowY + ddy, es);
-          const midX = (item.x1 + item.x2) / 2;
-          const midY = (item.y1 + item.y2) / 2;
-          const hSpan = Math.abs(item.x2 - item.x1);
-          const vSpan = Math.abs(item.y2 - item.y1);
-          let orientation = item.orientation || "h";
-          if (orientation === "h") {
-            const distFromMidY = Math.abs(newElbowY - midY);
-            const distFromMidX = Math.abs(newElbowX - midX);
-            if (distFromMidY > vSpan * 0.35 + 20 && distFromMidY > distFromMidX) orientation = "v";
-          } else {
-            const distFromMidX = Math.abs(newElbowX - midX);
-            const distFromMidY = Math.abs(newElbowY - midY);
-            if (distFromMidX > hSpan * 0.35 + 20 && distFromMidX > distFromMidY) orientation = "h";
-          }
-          props = { elbowX: newElbowX, elbowY: newElbowY, orientation };
+          props = { elbowX: newElbowX, elbowY: newElbowY, orientation: computeElbowOrientation(item, newElbowX, newElbowY) };
         }
         if (props) {
           itemOverrideRef.current = { id: si.id, props };
@@ -276,23 +262,10 @@ export function useTouchInput({
       touchRef.current = null;
 
       if (ref.gesture === "drag") {
-        // Commit final drag positions to React state
         const delta = dragDeltaRef.current;
         const drag = draggingRef.current;
         if (delta && drag) {
-          const es = effectiveSnapRef.current;
-          setItems(p => p.map(i => {
-            const start = drag.itemsStartMap?.get(i.id);
-            if (!start) return i;
-            if (i.type === 'connector') {
-              return { ...i,
-                x1: snap(start.x1 + delta.dx, es), y1: snap(start.y1 + delta.dy, es),
-                x2: snap(start.x2 + delta.dx, es), y2: snap(start.y2 + delta.dy, es),
-                elbowX: snap(start.elbowX + delta.dx, es), elbowY: snap(start.elbowY + delta.dy, es),
-              };
-            }
-            return { ...i, x: snap(start.x + delta.dx, es), y: snap(start.y + delta.dy, es) };
-          }));
+          setItems(p => applyDragDelta(p, drag.itemsStartMap, delta.dx, delta.dy, effectiveSnapRef.current));
         }
         dragDeltaRef.current = null;
         setDragging(null);

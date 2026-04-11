@@ -8,9 +8,44 @@ export function snap(v, on) {
   return on ? Math.round(v / GRID_SIZE) * GRID_SIZE : v; 
 }
 
-export function snapAngle(angle, on) { 
+export function snapAngle(angle, on) {
   if (!on) return angle;
   return Math.round(angle / SNAP_ANGLE) * SNAP_ANGLE;
+}
+
+/* ── Drag delta: apply a {dx,dy} offset to all dragged items ── */
+export function applyDragDelta(items, startMap, dx, dy, snapOn) {
+  return items.map(i => {
+    const start = startMap.get(i.id);
+    if (!start) return i;
+    if (i.type === 'connector') {
+      return { ...i,
+        x1: snap(start.x1 + dx, snapOn), y1: snap(start.y1 + dy, snapOn),
+        x2: snap(start.x2 + dx, snapOn), y2: snap(start.y2 + dy, snapOn),
+        elbowX: snap(start.elbowX + dx, snapOn), elbowY: snap(start.elbowY + dy, snapOn),
+      };
+    }
+    return { ...i, x: snap(start.x + dx, snapOn), y: snap(start.y + dy, snapOn) };
+  });
+}
+
+/* ── Elbow orientation: decide if connector bends H or V ── */
+export function computeElbowOrientation(item, newElbowX, newElbowY) {
+  const midX = (item.x1 + item.x2) / 2;
+  const midY = (item.y1 + item.y2) / 2;
+  const hSpan = Math.abs(item.x2 - item.x1);
+  const vSpan = Math.abs(item.y2 - item.y1);
+  let orientation = item.orientation || "h";
+  if (orientation === "h") {
+    const distFromMidY = Math.abs(newElbowY - midY);
+    const distFromMidX = Math.abs(newElbowX - midX);
+    if (distFromMidY > vSpan * 0.35 + 20 && distFromMidY > distFromMidX) orientation = "v";
+  } else {
+    const distFromMidX = Math.abs(newElbowX - midX);
+    const distFromMidY = Math.abs(newElbowY - midY);
+    if (distFromMidX > hSpan * 0.35 + 20 && distFromMidX > distFromMidY) orientation = "h";
+  }
+  return orientation;
 }
 
 export function itemShadowEnabled(item) {
