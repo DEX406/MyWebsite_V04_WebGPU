@@ -12,9 +12,9 @@ export function useTouchInput({
   effectiveSnapRef,
   scheduleSave, animateTo, pushUndo,
   multiSelectModeRef, setMultiSelectMode,
-  doHitTest,
+  doHitTest, dragDeltaRef, itemOverrideRef,
 }) {
-  const { panRef, zoomRef, isPanningRef, panStartRef, canvasRef, applyTransform, updateDisplays } = vp;
+  const { panRef, zoomRef, isPanningRef, panStartRef, canvasRef, drawBgRef, applyTransform, updateDisplays } = vp;
   const touchRef = useRef(null);
   const lastTapRef = useRef({ time: 0, itemId: null });
   const longPressTimerRef = useRef(null);
@@ -25,6 +25,9 @@ export function useTouchInput({
 
     if (e.touches.length === 2) {
       if (touchRef.current?.type === "single") {
+        // Clear any in-flight GPU overrides before cancelling gesture
+        dragDeltaRef.current = null;
+        itemOverrideRef.current = null;
         setDragging(null);
         isPanningRef.current = false;
       }
@@ -158,7 +161,7 @@ export function useTouchInput({
               : (item.groupId ? itemsRef.current.filter(i => i.groupId === item.groupId).map(i => i.id) : [itemId]);
             if (!alreadySelected) setSelectedIds(dragIds);
             pushUndo(itemsRef.current);
-            setDragging({
+            const dragInfo = {
               ids: dragIds,
               startX: touchRef.current.startX, startY: touchRef.current.startY,
               itemsStartMap: new Map(itemsRef.current.filter(i => dragIds.includes(i.id)).map(i => [i.id, {
@@ -166,7 +169,9 @@ export function useTouchInput({
                 x1: i.x1, y1: i.y1, x2: i.x2, y2: i.y2,
                 elbowX: i.elbowX, elbowY: i.elbowY
               }])),
-            });
+            };
+            setDragging(dragInfo);
+            draggingRef.current = dragInfo;  // sync ref so GPU render has it immediately
             touchRef.current.gesture = "drag";
           } else {
             // Unknown action — pan
@@ -192,62 +197,59 @@ export function useTouchInput({
       } else if (gesture === "drag") {
         const ddx = (t.clientX - touchRef.current.startX) / zoomRef.current;
         const ddy = (t.clientY - touchRef.current.startY) / zoomRef.current;
-        setItems(p => p.map(i => {
-          const start = draggingRef.current?.itemsStartMap?.get(i.id);
-          if (!start) return i;
-          if (i.type === "connector") {
-            return { ...i,
-              x1: snap(start.x1 + ddx, es), y1: snap(start.y1 + ddy, es),
-              x2: snap(start.x2 + ddx, es), y2: snap(start.y2 + ddy, es),
-              elbowX: snap(start.elbowX + ddx, es), elbowY: snap(start.elbowY + ddy, es),
-            };
-          }
-          return { ...i, x: snap(start.x + ddx, es), y: snap(start.y + ddy, es) };
-        }));
+        // Bypass React state — update ref and render WebGPU directly for zero-latency touch
+        dragDeltaRef.current = { dx: ddx, dy: ddy };
+        if (drawBgRef.current) drawBgRef.current();
       } else if (gesture === "resize") {
         const ddx = (t.clientX - touchRef.current.startX) / zoomRef.current;
         const ddy = (t.clientY - touchRef.current.startY) / zoomRef.current;
         const si = touchRef.current.startItem;
         const handle = touchRef.current.resizeHandle || "br";
         const r = computeResize(si, handle, ddx, ddy, es);
-        setItems(p => p.map(i => i.id === si.id ? { ...i, x: r.x, y: r.y, w: r.w, h: r.h } : i));
+        itemOverrideRef.current = { id: si.id, props: { x: r.x, y: r.y, w: r.w, h: r.h } };
+        if (drawBgRef.current) drawBgRef.current();
       } else if (gesture === "rotate") {
         const { x: cx, y: cy } = touchRef.current.rotateCenter;
         const mouseAngle = Math.atan2(t.clientY - cy, t.clientX - cx) * 180 / Math.PI;
         const deltaAngle = mouseAngle - touchRef.current.startMouseAngle;
         const newAngle = snapAngle(touchRef.current.startAngle + deltaAngle, es);
         const itemId = touchRef.current.itemId;
-        setItems(p => p.map(i => i.id === itemId ? { ...i, rotation: newAngle } : i));
+        itemOverrideRef.current = { id: itemId, props: { rotation: newAngle } };
+        if (drawBgRef.current) drawBgRef.current();
       } else if (gesture === "connector") {
         const ddx = (t.clientX - touchRef.current.startX) / zoomRef.current;
         const ddy = (t.clientY - touchRef.current.startY) / zoomRef.current;
         const si = touchRef.current.startItem;
         const handle = touchRef.current.connectorHandle;
-        setItems(p => p.map(i => {
-          if (i.id !== si.id) return i;
-          if (handle === "ep1") return { ...i, x1: snap(si.x1 + ddx, es), y1: snap(si.y1 + ddy, es) };
-          if (handle === "ep2") return { ...i, x2: snap(si.x2 + ddx, es), y2: snap(si.y2 + ddy, es) };
-          if (handle === "elbow") {
-            const newElbowX = snap(si.elbowX + ddx, es);
-            const newElbowY = snap(si.elbowY + ddy, es);
-            const midX = (i.x1 + i.x2) / 2;
-            const midY = (i.y1 + i.y2) / 2;
-            const hSpan = Math.abs(i.x2 - i.x1);
-            const vSpan = Math.abs(i.y2 - i.y1);
-            let orientation = i.orientation || "h";
-            if (orientation === "h") {
-              const distFromMidY = Math.abs(newElbowY - midY);
-              const distFromMidX = Math.abs(newElbowX - midX);
-              if (distFromMidY > vSpan * 0.35 + 20 && distFromMidY > distFromMidX) orientation = "v";
-            } else {
-              const distFromMidX = Math.abs(newElbowX - midX);
-              const distFromMidY = Math.abs(newElbowY - midY);
-              if (distFromMidX > hSpan * 0.35 + 20 && distFromMidX > distFromMidY) orientation = "h";
-            }
-            return { ...i, elbowX: newElbowX, elbowY: newElbowY, orientation };
+        let props;
+        if (handle === "ep1") {
+          props = { x1: snap(si.x1 + ddx, es), y1: snap(si.y1 + ddy, es) };
+        } else if (handle === "ep2") {
+          props = { x2: snap(si.x2 + ddx, es), y2: snap(si.y2 + ddy, es) };
+        } else if (handle === "elbow") {
+          const item = itemsRef.current.find(i => i.id === si.id);
+          const newElbowX = snap(si.elbowX + ddx, es);
+          const newElbowY = snap(si.elbowY + ddy, es);
+          const midX = (item.x1 + item.x2) / 2;
+          const midY = (item.y1 + item.y2) / 2;
+          const hSpan = Math.abs(item.x2 - item.x1);
+          const vSpan = Math.abs(item.y2 - item.y1);
+          let orientation = item.orientation || "h";
+          if (orientation === "h") {
+            const distFromMidY = Math.abs(newElbowY - midY);
+            const distFromMidX = Math.abs(newElbowX - midX);
+            if (distFromMidY > vSpan * 0.35 + 20 && distFromMidY > distFromMidX) orientation = "v";
+          } else {
+            const distFromMidX = Math.abs(newElbowX - midX);
+            const distFromMidY = Math.abs(newElbowY - midY);
+            if (distFromMidX > hSpan * 0.35 + 20 && distFromMidX > distFromMidY) orientation = "h";
           }
-          return i;
-        }));
+          props = { elbowX: newElbowX, elbowY: newElbowY, orientation };
+        }
+        if (props) {
+          itemOverrideRef.current = { id: si.id, props };
+          if (drawBgRef.current) drawBgRef.current();
+        }
       }
     }
   }, [applyTransform, updateDisplays]);
@@ -274,6 +276,25 @@ export function useTouchInput({
       touchRef.current = null;
 
       if (ref.gesture === "drag") {
+        // Commit final drag positions to React state
+        const delta = dragDeltaRef.current;
+        const drag = draggingRef.current;
+        if (delta && drag) {
+          const es = effectiveSnapRef.current;
+          setItems(p => p.map(i => {
+            const start = drag.itemsStartMap?.get(i.id);
+            if (!start) return i;
+            if (i.type === 'connector') {
+              return { ...i,
+                x1: snap(start.x1 + delta.dx, es), y1: snap(start.y1 + delta.dy, es),
+                x2: snap(start.x2 + delta.dx, es), y2: snap(start.y2 + delta.dy, es),
+                elbowX: snap(start.elbowX + delta.dx, es), elbowY: snap(start.elbowY + delta.dy, es),
+              };
+            }
+            return { ...i, x: snap(start.x + delta.dx, es), y: snap(start.y + delta.dy, es) };
+          }));
+        }
+        dragDeltaRef.current = null;
         setDragging(null);
         scheduleSave();
         return;
@@ -283,6 +304,12 @@ export function useTouchInput({
         return;
       }
       if (ref.gesture === "resize" || ref.gesture === "rotate" || ref.gesture === "connector") {
+        // Commit final override to React state
+        const ov = itemOverrideRef.current;
+        if (ov) {
+          setItems(p => p.map(i => i.id === ov.id ? { ...i, ...ov.props } : i));
+          itemOverrideRef.current = null;
+        }
         scheduleSave();
         return;
       }
