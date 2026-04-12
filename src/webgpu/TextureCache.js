@@ -8,6 +8,7 @@ export class TextureCache {
     this.device = device;
     this.cache = new Map(); // url → { tex, view, width, height, ready, isPlaceholder, insertOrder }
     this.videos = new Map(); // itemId → { video, tex, view, src, width, height, ready }
+    this.gifs = new Map();   // url → { img, tex, view, src, width, height, ready }
     this.loading = new Set();
     this.insertCounter = 0;
     this._onTextureReady = onTextureReady || null;
@@ -210,6 +211,73 @@ export class TextureCache {
     }
   }
 
+  // ── Animated GIF support ──────────────────────────────────────────────────
+  // Keeps a live <img> element per GIF URL. The browser's native decoder
+  // advances frames; we copy the current frame to a GPUTexture each render.
+  // This is the most efficient path — the decode runs in optimised C++ and
+  // copyExternalImageToTexture is a fast GPU memory copy.
+
+  getGif(src) {
+    let entry = this.gifs.get(src);
+    if (entry) {
+      if (entry.ready && entry.img.complete) {
+        const iw = entry.img.naturalWidth;
+        const ih = entry.img.naturalHeight;
+        if (iw > 0 && ih > 0) {
+          if (entry.width !== iw || entry.height !== ih) {
+            entry.tex.destroy();
+            entry.tex = this._createFromSource(entry.img, iw, ih);
+            entry.view = entry.tex.createView();
+            entry.width = iw;
+            entry.height = ih;
+          } else {
+            this.device.queue.copyExternalImageToTexture(
+              { source: entry.img, flipY: false },
+              { texture: entry.tex },
+              [iw, ih],
+            );
+          }
+        }
+      }
+      return entry;
+    }
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+
+    const tex1 = this._create1x1([0, 0, 0, 0]);
+    const newEntry = {
+      img,
+      tex: tex1.tex,
+      view: tex1.view,
+      src,
+      width: 1,
+      height: 1,
+      ready: false,
+    };
+
+    img.onload = () => {
+      newEntry.ready = true;
+      if (this._onTextureReady) this._onTextureReady();
+    };
+    img.onerror = () => {};
+    img.src = src;
+
+    this.gifs.set(src, newEntry);
+    return newEntry;
+  }
+
+  pruneGifs(activeSrcs) {
+    const activeSet = new Set(activeSrcs);
+    for (const [src, entry] of this.gifs) {
+      if (!activeSet.has(src)) {
+        entry.img.src = '';
+        entry.tex.destroy();
+        this.gifs.delete(src);
+      }
+    }
+  }
+
   // Compute UV crop rect for object-fit: cover (pure math — no GPU calls)
   coverUV(texW, texH, itemW, itemH) {
     if (!texW || !texH || !itemW || !itemH) return [0, 0, 1, 1];
@@ -233,9 +301,14 @@ export class TextureCache {
       entry.video.src = '';
       entry.tex.destroy();
     }
+    for (const entry of this.gifs.values()) {
+      entry.img.src = '';
+      entry.tex.destroy();
+    }
     this.fallback.tex.destroy();
     this.transparent.tex.destroy();
     this.cache.clear();
     this.videos.clear();
+    this.gifs.clear();
   }
 }

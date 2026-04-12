@@ -129,10 +129,10 @@ export default function App() {
     return () => ro.disconnect();
   }, []);
 
-  // Continuous render for video items (need to update video textures each frame)
+  // Continuous render for animated items (videos + GIFs need texture updates each frame)
   useEffect(() => {
-    const hasVideo = items.some(i => i.type === 'video');
-    if (!hasVideo) return;
+    const hasAnimated = items.some(i => i.type === 'video' || (i.type === 'image' && (i.isGif || /\.gif(\?|$)/i.test(i.src))));
+    if (!hasAnimated) return;
     let running = true;
     const loop = () => {
       if (!running) return;
@@ -339,7 +339,7 @@ export default function App() {
     const id = uid();
     const c = viewCenter();
     const defaultW = snap(320, true), defaultH = snap(240, true);
-    setItemsAndSave(p => [...p, { id, type: "image", src: url, x: snap(c.x - defaultW / 2, true), y: snap(c.y - defaultH / 2, true), w: defaultW, h: defaultH, z: maxZ(p) + 1, radius: 2, rotation: 0 }]);
+    setItemsAndSave(p => [...p, { id, type: "image", isGif: true, src: url, x: snap(c.x - defaultW / 2, true), y: snap(c.y - defaultH / 2, true), w: defaultW, h: defaultH, z: maxZ(p) + 1, radius: 2, rotation: 0 }]);
     addImageToCanvas(url, { id, ...opts });
   };
 

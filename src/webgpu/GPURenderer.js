@@ -14,6 +14,8 @@ function hexToRgba(hex, alpha = 1) {
   return [...hexToRgb(hex), alpha];
 }
 
+const GIF_RE = /\.gif(\?|#|$)/i;
+
 const SUPERSAMPLE = 2;
 const MAX_QUAD_DRAWS = 1024;
 const MAX_LINE_DRAWS = 512;
@@ -461,6 +463,12 @@ export class GPURenderer {
     // Prune video textures
     const videoIds = items.filter(i => i.type === 'video').map(i => i.id);
     this.texCache.pruneVideos(videoIds);
+
+    // Prune GIF textures
+    const gifSrcs = items
+      .filter(i => i.type === 'image' && (i.isGif || GIF_RE.test(i.src)))
+      .map(i => i.src);
+    this.texCache.pruneGifs(gifSrcs);
   }
 
   // ── Collect draw commands ──────────────────────────────────────────────────
@@ -504,22 +512,35 @@ export class GPURenderer {
     let sampler = this.texCache.nearestSampler;
 
     if (item.type === 'image') {
-      const target = item.targetSrc || item.displaySrc || item.src;
-      const allTiers = [item.src, item.srcQ50, item.srcQ25, item.srcQ12, item.srcQ6];
-      const seen = new Set();
-      const candidates = [];
-      for (const c of [target, ...allTiers]) {
-        if (c && !seen.has(c)) { seen.add(c); candidates.push(c); }
+      if (item.isGif || GIF_RE.test(item.src)) {
+        // Animated GIF — copy current browser-decoded frame to GPU each render
+        const entry = this.texCache.getGif(item.src);
+        u[33] = entry.ready ? 1 : 0;
+        const texW = entry.width || item.naturalWidth || item.w;
+        const texH = entry.height || item.naturalHeight || item.h;
+        const crop = this.texCache.coverUV(texW, texH, item.w, item.h);
+        u[20] = crop[0]; u[21] = crop[1]; u[22] = crop[2]; u[23] = crop[3];
+        u.set(entry.ready ? [1, 1, 1, 1] : [0, 0, 0, 0], 16);
+        texView = entry.view;
+        sampler = this.texCache.linearSampler;
+      } else {
+        const target = item.targetSrc || item.displaySrc || item.src;
+        const allTiers = [item.src, item.srcQ50, item.srcQ25, item.srcQ12, item.srcQ6];
+        const seen = new Set();
+        const candidates = [];
+        for (const c of [target, ...allTiers]) {
+          if (c && !seen.has(c)) { seen.add(c); candidates.push(c); }
+        }
+        const best = this.texCache.getBestReady(candidates, item.pixelated);
+        const entry = best.entry;
+        u[33] = 1; // textured
+        const texW = entry.width || item.naturalWidth || item.w;
+        const texH = entry.height || item.naturalHeight || item.h;
+        const crop = this.texCache.coverUV(texW, texH, item.w, item.h);
+        u[20] = crop[0]; u[21] = crop[1]; u[22] = crop[2]; u[23] = crop[3];
+        u.set([1, 1, 1, 1], 16); // color white
+        texView = entry.view;
       }
-      const best = this.texCache.getBestReady(candidates, item.pixelated);
-      const entry = best.entry;
-      u[33] = 1; // textured
-      const texW = entry.width || item.naturalWidth || item.w;
-      const texH = entry.height || item.naturalHeight || item.h;
-      const crop = this.texCache.coverUV(texW, texH, item.w, item.h);
-      u[20] = crop[0]; u[21] = crop[1]; u[22] = crop[2]; u[23] = crop[3];
-      u.set([1, 1, 1, 1], 16); // color white
-      texView = entry.view;
     } else if (item.type === 'video') {
       const entry = this.texCache.getVideo(item.id, item.src);
       u[33] = entry.ready ? 1 : 0;
