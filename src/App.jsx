@@ -734,9 +734,9 @@ export default function App() {
 
       {/* Zoom controls + Coordinates */}
       <div data-ui style={{ position: "absolute", bottom: "calc(16px + env(safe-area-inset-bottom, 0px))", left: "calc(16px + env(safe-area-inset-left, 0px))", zIndex: Z.UI, display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ ...tbSurface, alignItems: "stretch" }}>
+        <div style={tbSurface}>
           <button onClick={goHome} title="Home view" style={tbBtn}><HomeIcon /></button>
-          <div ref={posDisplayRef} style={{ ...infoText, padding: "4px 10px", whiteSpace: "pre", lineHeight: 1.4, fontSize: 10, display: "flex", alignItems: "center" }}>X 0{"\n"}Y 0</div>
+          <div ref={posDisplayRef} style={{ ...infoText, height: 32, padding: "0 10px", whiteSpace: "pre", lineHeight: 1.35, fontSize: 10, display: "flex", alignItems: "center" }}>X 0{"\n"}Y 0</div>
         </div>
         <div style={tbSurface}>
           <button onClick={() => zoomTo(vp.zoomRef.current * 1.3)} style={tbBtn}><ZoomInIcon /></button>
