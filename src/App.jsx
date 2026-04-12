@@ -13,6 +13,7 @@ import { ColorPickerPopup } from './components/ColorPickerPopup.jsx';
 import { LoginModal } from './components/LoginModal.jsx';
 import { loadBoard, saveBoard, cleanupFiles, uploadImage, uploadVideo, login, logout, hasToken, getBackupManifest, restoreImageKey, downloadImageViaProxy, serverResize } from './api.js';
 import { convertVideoToWebm, isVideoFile } from './videoUtils.js';
+import { SUPERSAMPLE } from './webgpu/GPURenderer.js';
 import { useViewport } from './hooks/useViewport.js';
 import { useKeyboard } from './hooks/useKeyboard.js';
 import { usePointerInput } from './hooks/usePointerInput.js';
@@ -124,7 +125,7 @@ export default function App() {
           el.crossOrigin = 'anonymous';
           el.src = o.src;
         }
-        el.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;object-fit:cover;transform-origin:center center;';
+        el.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;object-fit:cover;transform-origin:center center;image-rendering:pixelated;';
         container.appendChild(el);
         els.set(o.id, el);
       }
@@ -134,22 +135,30 @@ export default function App() {
         if (el.tagName === 'VIDEO') el.play().catch(() => {});
       }
       // Position: world coords → screen coords via CSS transform
+      // Render at SUPERSAMPLE× size then scale back down so the browser's
+      // bilinear compositing downsamples the nearest-neighbour image, matching
+      // how the WebGPU canvas supersamples everything else.
       const screenX = o.x * zoom + panX;
       const screenY = o.y * zoom + panY;
       const screenW = o.w * zoom;
       const screenH = o.h * zoom;
-      el.style.left = screenX + 'px';
-      el.style.top = screenY + 'px';
-      el.style.width = screenW + 'px';
-      el.style.height = screenH + 'px';
+      const ss = SUPERSAMPLE;
+      const invSS = 1 / ss;
+      // Element is ss× display size; scale(invSS) around center shrinks it
+      // back, shifting the top-left inward by half the excess on each axis.
+      el.style.left = (screenX - screenW * (ss - 1) * 0.5) + 'px';
+      el.style.top = (screenY - screenH * (ss - 1) * 0.5) + 'px';
+      el.style.width = (screenW * ss) + 'px';
+      el.style.height = (screenH * ss) + 'px';
       // z-index must match item z-order so overlapping media layers correctly
       // (e.g. two GIFs overlapping — "bring to front" must change DOM stacking)
       el.style.zIndex = o.z;
       // Border radius on both CSS and GPU matte is intentional:
       // the matte controls the canvas hole shape, CSS clips the DOM element
       // so the browser skips compositing pixels hidden behind the opaque canvas.
-      el.style.borderRadius = (o.radius * zoom) + 'px';
-      el.style.transform = o.rotation ? `rotate(${o.rotation}deg)` : '';
+      el.style.borderRadius = (o.radius * zoom * ss) + 'px';
+      const rot = o.rotation ? ` rotate(${o.rotation}deg)` : '';
+      el.style.transform = `scale(${invSS})${rot}`;
       el.style.transformOrigin = 'center center';
     }
   }, []);
