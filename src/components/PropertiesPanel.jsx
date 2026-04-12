@@ -3,7 +3,7 @@ import { FONT, FONTS } from '../constants.js';
 import { itemShadowEnabled } from '../utils.js';
 import { uploadImage, serverResize, downloadImageViaProxy } from '../api.js';
 import { ChevronUpIcon, ChevronDownIcon } from '../icons.jsx';
-import { togBtn, panelSurface, tbBtn, Z } from '../styles.js';
+import { togBtn, panelSurface, tbBtn, Z, CHECKER_BG } from '../styles.js';
 
 /* ─────────────────────────────────────────────
    Design tokens (derived from global style)
@@ -87,14 +87,13 @@ function Toggle({ label, active, onClick, flex }) {
    ───────────────────────────────────────────── */
 function ColorPill({ label, value, onOpen, onChange }) {
   const isTransparent = !value || value === "transparent";
-  const checkerboard = "repeating-conic-gradient(#30302E 0% 25%, #1F1E1D 0% 50%) 0 0 / 8px 8px";
   return (
     <button
       data-ui
       onClick={e => onOpen(e, isTransparent ? "#000000" : value, onChange)}
       style={{
         height: PILL_H, borderRadius: PILL_R, border: PILL_BRD,
-        background: isTransparent ? checkerboard : value,
+        background: isTransparent ? CHECKER_BG : value,
         cursor: "pointer", padding: "0 12px",
         display: "flex", alignItems: "center", justifyContent: "center",
         flex: 1, minWidth: 0, position: "relative", overflow: "hidden",
