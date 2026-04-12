@@ -108,7 +108,8 @@ export function usePointerInput({
           itemsStartMap: new Map(items.filter(i => dragIds.includes(i.id)).map(i => [i.id, {
             id: i.id, x: i.x, y: i.y,
             x1: i.x1, y1: i.y1, x2: i.x2, y2: i.y2,
-            elbowX: i.elbowX, elbowY: i.elbowY
+            elbowX: i.elbowX ?? (i.x1 + i.x2) / 2,
+            elbowY: i.elbowY ?? (i.y1 + i.y2) / 2
           }])),
         };
         setDragging(dragInfo);

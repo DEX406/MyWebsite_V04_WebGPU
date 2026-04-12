@@ -25,10 +25,13 @@ export function applyDragDelta(items, startMap, dx, dy, snapOn) {
     const start = startMap.get(i.id);
     if (!start) return i;
     if (i.type === 'connector') {
+      const sx1 = start.x1 ?? i.x1, sy1 = start.y1 ?? i.y1;
+      const sx2 = start.x2 ?? i.x2, sy2 = start.y2 ?? i.y2;
       return { ...i,
-        x1: snap(start.x1 + dx, snapOn), y1: snap(start.y1 + dy, snapOn),
-        x2: snap(start.x2 + dx, snapOn), y2: snap(start.y2 + dy, snapOn),
-        elbowX: snap(start.elbowX + dx, snapOn), elbowY: snap(start.elbowY + dy, snapOn),
+        x1: snap(sx1 + dx, snapOn), y1: snap(sy1 + dy, snapOn),
+        x2: snap(sx2 + dx, snapOn), y2: snap(sy2 + dy, snapOn),
+        elbowX: snap((start.elbowX ?? (sx1 + sx2) / 2) + dx, snapOn),
+        elbowY: snap((start.elbowY ?? (sy1 + sy2) / 2) + dy, snapOn),
       };
     }
     return { ...i, x: snap(start.x + dx, snapOn), y: snap(start.y + dy, snapOn) };
@@ -179,6 +182,11 @@ export function migrateItems(items) {
     }
     if (item.type === "connector" && out.orientation === undefined) {
       out = { ...out, elbowX: out.elbowX ?? ((out.x1 + out.x2) / 2), elbowY: out.elbowY ?? ((out.y1 + out.y2) / 2), orientation: "h" };
+    }
+    // Sanitize NaN elbow coords (can happen from previous bugs)
+    if (item.type === "connector") {
+      if (!Number.isFinite(out.elbowX)) out = { ...out, elbowX: ((out.x1 ?? 0) + (out.x2 ?? 0)) / 2 };
+      if (!Number.isFinite(out.elbowY)) out = { ...out, elbowY: ((out.y1 ?? 0) + (out.y2 ?? 0)) / 2 };
     }
     return out;
   });
