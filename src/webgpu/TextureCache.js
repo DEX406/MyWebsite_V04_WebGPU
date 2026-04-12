@@ -13,6 +13,12 @@ export class TextureCache {
     this.insertCounter = 0;
     this._onTextureReady = onTextureReady || null;
 
+    // Hidden container for GIF <img> elements — must be in the DOM so
+    // browsers keep advancing animation frames.
+    this._gifContainer = document.createElement('div');
+    this._gifContainer.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;pointer-events:none;opacity:0;z-index:-1';
+    document.body.appendChild(this._gifContainer);
+
     // Samplers (shared across all textures)
     this.nearestSampler = device.createSampler({
       minFilter: 'nearest',
@@ -244,6 +250,8 @@ export class TextureCache {
 
     const img = new Image();
     img.crossOrigin = 'anonymous';
+    // Must be in the DOM for the browser to keep advancing GIF frames
+    this._gifContainer.appendChild(img);
 
     const tex1 = this._create1x1([0, 0, 0, 0]);
     const newEntry = {
@@ -271,6 +279,7 @@ export class TextureCache {
     const activeSet = new Set(activeSrcs);
     for (const [src, entry] of this.gifs) {
       if (!activeSet.has(src)) {
+        entry.img.remove();
         entry.img.src = '';
         entry.tex.destroy();
         this.gifs.delete(src);
@@ -302,6 +311,7 @@ export class TextureCache {
       entry.tex.destroy();
     }
     for (const entry of this.gifs.values()) {
+      entry.img.remove();
       entry.img.src = '';
       entry.tex.destroy();
     }
@@ -310,5 +320,6 @@ export class TextureCache {
     this.cache.clear();
     this.videos.clear();
     this.gifs.clear();
+    this._gifContainer.remove();
   }
 }
