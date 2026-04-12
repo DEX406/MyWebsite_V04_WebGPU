@@ -7,6 +7,7 @@ const hitBase = {
   position: 'absolute', width: HIT, height: HIT,
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   pointerEvents: 'auto', background: 'transparent', border: 'none', padding: 0,
+  transform: 'scale(var(--inv-zoom, 1))',
 };
 
 function Handle({ item, handle, style, cursor }) {
@@ -32,7 +33,7 @@ export function ItemHandles({ item, deleteItems }) {
         <div data-item-id={item.id} data-action="rotate" style={{
           ...hitBase,
           left: '50%', top: -(ROD_LEN + half + 6),
-          transform: 'translateX(-50%)',
+          transform: 'translateX(-50%) scale(var(--inv-zoom, 1))',
           cursor: 'grab',
         }} />
 
@@ -48,13 +49,13 @@ export function ItemHandles({ item, deleteItems }) {
 
         {/* Edge resize hit zones */}
         <Handle item={item} handle="t" cursor="ns-resize"
-          style={{ top: -half, left: '50%', transform: 'translateX(-50%)' }} />
+          style={{ top: -half, left: '50%', transform: 'translateX(-50%) scale(var(--inv-zoom, 1))' }} />
         <Handle item={item} handle="b" cursor="ns-resize"
-          style={{ bottom: -half, left: '50%', transform: 'translateX(-50%)' }} />
+          style={{ bottom: -half, left: '50%', transform: 'translateX(-50%) scale(var(--inv-zoom, 1))' }} />
         <Handle item={item} handle="l" cursor="ew-resize"
-          style={{ left: -half, top: '50%', transform: 'translateY(-50%)' }} />
+          style={{ left: -half, top: '50%', transform: 'translateY(-50%) scale(var(--inv-zoom, 1))' }} />
         <Handle item={item} handle="r" cursor="ew-resize"
-          style={{ right: -half, top: '50%', transform: 'translateY(-50%)' }} />
+          style={{ right: -half, top: '50%', transform: 'translateY(-50%) scale(var(--inv-zoom, 1))' }} />
 
         {/* Delete hit zone */}
         <button

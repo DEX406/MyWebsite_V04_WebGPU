@@ -13,7 +13,7 @@ export function ConnectorHandles({ item, deleteItems }) {
   const delX = handleX + 18;
   const delY = handleY - 18;
 
-  const hS = { position: "absolute", width: 18, height: 18, background: "transparent", border: "none", borderRadius: "50%", transform: "translate(-50%, -50%)", cursor: "move", pointerEvents: "auto" };
+  const hS = { position: "absolute", width: 18, height: 18, background: "transparent", border: "none", borderRadius: "50%", transform: "translate(-50%, -50%) scale(var(--inv-zoom, 1))", cursor: "move", pointerEvents: "auto" };
 
   return (
     <div style={{ position: "absolute", left: 0, top: 0, width: 0, height: 0, zIndex: Z.HANDLE_GRIP, pointerEvents: "none" }}>
@@ -21,7 +21,7 @@ export function ConnectorHandles({ item, deleteItems }) {
       <div data-item-id={item.id} data-action="move-ep2" style={{ ...hS, left: x2, top: y2 }} />
       <div data-item-id={item.id} data-action="move-elbow" style={{ ...hS, left: handleX, top: handleY }} />
       <button onPointerDown={e => { e.stopPropagation(); e.preventDefault(); deleteItems([item.id]); }}
-        style={{ position: "absolute", left: delX, top: delY, transform: "translate(-50%, -50%)", width: 22, height: 22, background: "transparent", border: "none", borderRadius: "50%", cursor: "pointer", pointerEvents: "auto" }} />
+        style={{ position: "absolute", left: delX, top: delY, transform: "translate(-50%, -50%) scale(var(--inv-zoom, 1))", width: 22, height: 22, background: "transparent", border: "none", borderRadius: "50%", cursor: "pointer", pointerEvents: "auto" }} />
     </div>
   );
 }

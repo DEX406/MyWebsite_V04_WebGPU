@@ -45,8 +45,10 @@ export function useViewport() {
       interactingRef.current = true;
       if (canvasHandlesRef.current) canvasHandlesRef.current.style.willChange = 'transform';
     }
-    if (canvasHandlesRef.current)
+    if (canvasHandlesRef.current) {
       canvasHandlesRef.current.style.transform = `translate(${x}px,${y}px) scale(${z})`;
+      canvasHandlesRef.current.style.setProperty('--inv-zoom', `${1 / z}`);
+    }
     if (drawBgRef.current) drawBgRef.current();
     if (displaysDirtyRef.current) {
       displaysDirtyRef.current = false;
