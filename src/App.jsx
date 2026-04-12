@@ -142,6 +142,9 @@ export default function App() {
       el.style.top = screenY + 'px';
       el.style.width = screenW + 'px';
       el.style.height = screenH + 'px';
+      // z-index must match item z-order so overlapping media layers correctly
+      // (e.g. two GIFs overlapping — "bring to front" must change DOM stacking)
+      el.style.zIndex = o.z;
       // Border radius on both CSS and GPU matte is intentional:
       // the matte controls the canvas hole shape, CSS clips the DOM element
       // so the browser skips compositing pixels hidden behind the opaque canvas.
