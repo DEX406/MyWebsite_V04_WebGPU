@@ -14,7 +14,7 @@ function hexToRgba(hex, alpha = 1) {
   return [...hexToRgb(hex), alpha];
 }
 
-const SUPERSAMPLE = 2;
+export const SUPERSAMPLE = 2;
 const MAX_QUAD_DRAWS = 1024;
 const MAX_LINE_DRAWS = 512;
 const MAX_CIRCLE_DRAWS = 1024;
