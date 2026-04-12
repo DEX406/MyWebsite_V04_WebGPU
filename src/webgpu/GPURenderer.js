@@ -8,13 +8,11 @@ import {
 import { TextureCache } from './TextureCache.js';
 import { TextRenderer } from './TextRenderer.js';
 import { PillRenderer } from './PillRenderer.js';
-import { hexToRgb } from '../utils.js';
+import { hexToRgb, isGifSrc } from '../utils.js';
 
 function hexToRgba(hex, alpha = 1) {
   return [...hexToRgb(hex), alpha];
 }
-
-const GIF_RE = /\.gif(\?|#|$)/i;
 
 const SUPERSAMPLE = 2;
 const MAX_QUAD_DRAWS = 1024;
@@ -460,14 +458,14 @@ export class GPURenderer {
     pass.end();
     device.queue.submit([encoder.finish()]);
 
-    // Prune video textures
-    const videoIds = items.filter(i => i.type === 'video').map(i => i.id);
+    // Prune unused media textures (single pass)
+    const videoIds = [];
+    const gifSrcs = [];
+    for (const i of items) {
+      if (i.type === 'video') videoIds.push(i.id);
+      else if (i.type === 'image' && (i.isGif || isGifSrc(i.src))) gifSrcs.push(i.src);
+    }
     this.texCache.pruneVideos(videoIds);
-
-    // Prune GIF textures
-    const gifSrcs = items
-      .filter(i => i.type === 'image' && (i.isGif || GIF_RE.test(i.src)))
-      .map(i => i.src);
     this.texCache.pruneGifs(gifSrcs);
   }
 
@@ -511,19 +509,18 @@ export class GPURenderer {
     let texView = null;
     let sampler = this.texCache.nearestSampler;
 
-    if (item.type === 'image') {
-      if (item.isGif || GIF_RE.test(item.src)) {
-        // Animated GIF — copy current browser-decoded frame to GPU each render
-        const entry = this.texCache.getGif(item.src);
-        u[33] = entry.ready ? 1 : 0;
-        const texW = entry.width || item.naturalWidth || item.w;
-        const texH = entry.height || item.naturalHeight || item.h;
-        const crop = this.texCache.coverUV(texW, texH, item.w, item.h);
-        u[20] = crop[0]; u[21] = crop[1]; u[22] = crop[2]; u[23] = crop[3];
-        u.set(entry.ready ? [1, 1, 1, 1] : [0, 0, 0, 0], 16);
-        texView = entry.view;
+    if (item.type === 'image' || item.type === 'video') {
+      // ── Resolve texture entry based on media type ──
+      let entry;
+      const isGif = item.type === 'image' && (item.isGif || isGifSrc(item.src));
+
+      if (item.type === 'video') {
+        entry = this.texCache.getVideo(item.id, item.src);
+      } else if (isGif) {
+        entry = this.texCache.getGif(item.src);
         sampler = this.texCache.linearSampler;
       } else {
+        // Static image — pick best available mipmap tier
         const target = item.targetSrc || item.displaySrc || item.src;
         const allTiers = [item.src, item.srcQ50, item.srcQ25, item.srcQ12, item.srcQ6];
         const seen = new Set();
@@ -531,24 +528,22 @@ export class GPURenderer {
         for (const c of [target, ...allTiers]) {
           if (c && !seen.has(c)) { seen.add(c); candidates.push(c); }
         }
-        const best = this.texCache.getBestReady(candidates, item.pixelated);
-        const entry = best.entry;
-        u[33] = 1; // textured
-        const texW = entry.width || item.naturalWidth || item.w;
-        const texH = entry.height || item.naturalHeight || item.h;
-        const crop = this.texCache.coverUV(texW, texH, item.w, item.h);
-        u[20] = crop[0]; u[21] = crop[1]; u[22] = crop[2]; u[23] = crop[3];
-        u.set([1, 1, 1, 1], 16); // color white
-        texView = entry.view;
+        entry = this.texCache.getBestReady(candidates, item.pixelated).entry;
       }
-    } else if (item.type === 'video') {
-      const entry = this.texCache.getVideo(item.id, item.src);
-      u[33] = entry.ready ? 1 : 0;
+
+      // ── Common: crop, color, texture ──
+      const isReady = entry.ready !== false;
+      u[33] = isReady ? 1 : 0;
       const texW = entry.width || item.naturalWidth || item.w;
       const texH = entry.height || item.naturalHeight || item.h;
       const crop = this.texCache.coverUV(texW, texH, item.w, item.h);
       u[20] = crop[0]; u[21] = crop[1]; u[22] = crop[2]; u[23] = crop[3];
-      u.set([0, 0, 0, 1], 16); // color black
+
+      if (item.type === 'video') {
+        u.set([0, 0, 0, 1], 16); // black while video loads
+      } else {
+        u.set(isReady ? [1, 1, 1, 1] : [0, 0, 0, 0], 16);
+      }
       texView = entry.view;
     } else if (item.type === 'text' || item.type === 'link') {
       const isEditing = editingTextId === item.id;
@@ -905,23 +900,28 @@ export class GPURenderer {
     const format = this._imgFormat(src);
     const srcType = this._imgSrcType(src);
 
-    // Dimensions from item properties or texture cache
-    let dimW = null, dimH = null;
-    if (item.naturalWidth && item.naturalHeight) {
-      dimW = item.naturalWidth;
-      dimH = item.naturalHeight;
-    } else {
-      const target = item.targetSrc || item.displaySrc || item.src;
-      const tiers = [item.src, item.srcQ50, item.srcQ25, item.srcQ12, item.srcQ6];
-      const seen = new Set();
-      const candidates = [];
-      for (const c of [target, ...tiers]) {
-        if (c && !seen.has(c)) { seen.add(c); candidates.push(c); }
+    // Dimensions: prefer stored natural size, then look up from the appropriate cache
+    let dimW = item.naturalWidth || null;
+    let dimH = item.naturalHeight || null;
+    if (!dimW || !dimH) {
+      let entry;
+      if (item.type === 'video') {
+        entry = this.texCache.videos.get(item.id);
+      } else if (item.isGif || isGifSrc(item.src)) {
+        entry = this.texCache.gifs.get(item.src);
+      } else {
+        const target = item.targetSrc || item.displaySrc || item.src;
+        const tiers = [item.src, item.srcQ50, item.srcQ25, item.srcQ12, item.srcQ6];
+        const seen = new Set();
+        const candidates = [];
+        for (const c of [target, ...tiers]) {
+          if (c && !seen.has(c)) { seen.add(c); candidates.push(c); }
+        }
+        entry = this.texCache.getBestReady(candidates, item.pixelated).entry;
       }
-      const best = this.texCache.getBestReady(candidates, item.pixelated);
-      if (best.entry && best.entry.width > 1) {
-        dimW = best.entry.width;
-        dimH = best.entry.height;
+      if (entry && entry.width > 1) {
+        dimW = entry.width;
+        dimH = entry.height;
       }
     }
 

@@ -3,7 +3,7 @@ import { ZoomInIcon, ZoomOutIcon, GridIcon, HomeIcon, FloppyIcon, UndoIcon, Redo
 
 import { FONT, FONTS, DEFAULT_BG_GRID } from './constants.js';
 import { loadConfiguredFonts } from './fontLibrary.js';
-import { uid, snap, applyBg, isTyping, pasteItems, migrateItems, applyDragDelta } from './utils.js';
+import { uid, snap, applyBg, isTyping, pasteItems, migrateItems, applyDragDelta, isGifSrc } from './utils.js';
 import { createBackupZip, restoreFromZip } from './backupRestore.js';
 import { tbBtn, tbSurface, tbSep, togBtn, infoText, panelSurface, UI_BG, UI_BORDER, Z } from './styles.js';
 import { CanvasItem } from './components/CanvasItem.jsx';
@@ -131,7 +131,7 @@ export default function App() {
 
   // Continuous render for animated items (videos + GIFs need texture updates each frame)
   useEffect(() => {
-    const hasAnimated = items.some(i => i.type === 'video' || (i.type === 'image' && (i.isGif || /\.gif(\?|$)/i.test(i.src))));
+    const hasAnimated = items.some(i => i.type === 'video' || (i.type === 'image' && (i.isGif || isGifSrc(i.src))));
     if (!hasAnimated) return;
     let running = true;
     const loop = () => {
@@ -471,7 +471,7 @@ export default function App() {
   const handleAddImageUrl = () => {
     const url = prompt("Enter image URL:");
     if (url) {
-      const isGif = /\.gif(\?|$)/i.test(url);
+      const isGif = isGifSrc(url);
       const onError = () => { setUploadStatus(`Failed to load ${isGif ? "GIF" : "image"} from URL`); setTimeout(() => setUploadStatus(""), 4000); };
       if (isGif) {
         addGifToCanvas(url, { onError });
