@@ -130,7 +130,7 @@ export function Toolbar({
   }, [anyOpen]);
 
   return (
-    <div data-ui style={{ position: "absolute", top: "calc(16px + env(safe-area-inset-top, 0px))", right: "calc(16px + env(safe-area-inset-right, 0px))", zIndex: Z.UI, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+    <div data-ui style={{ position: "absolute", top: "calc(16px + env(safe-area-inset-top, 0px))", right: "calc(16px + env(safe-area-inset-right, 0px))", zIndex: Z.UI, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
       {/* Row 1: settings + utilities + lock */}
       {isAdmin && (
         <div style={{ ...tbSurface, zIndex: 2 }}>
