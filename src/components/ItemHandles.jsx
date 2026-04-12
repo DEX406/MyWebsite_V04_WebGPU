@@ -17,7 +17,7 @@ function Handle({ item, handle, style, cursor }) {
   );
 }
 
-export function ItemHandles({ item, deleteItems }) {
+export function ItemHandles({ item }) {
   const half = HIT / 2;
   return (
     <div style={{
@@ -56,12 +56,6 @@ export function ItemHandles({ item, deleteItems }) {
           style={{ left: -half, top: '50%', transform: 'translateY(-50%) scale(var(--inv-zoom, 1))' }} />
         <Handle item={item} handle="r" cursor="ew-resize"
           style={{ right: -half, top: '50%', transform: 'translateY(-50%) scale(var(--inv-zoom, 1))' }} />
-
-        {/* Delete hit zone */}
-        <button
-          onPointerDown={e => { e.stopPropagation(); e.preventDefault(); deleteItems([item.id]); }}
-          style={{ ...hitBase, top: -49, right: -49, cursor: 'pointer' }}
-        />
       </div>
     </div>
   );

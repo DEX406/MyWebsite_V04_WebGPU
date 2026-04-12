@@ -4,14 +4,14 @@ import { Z } from '../styles.js';
 import { TEXT_PAD_X, TEXT_PAD_Y, TEXT_LINE_HEIGHT, TEXT_DEFAULT_SIZE, FONT } from '../constants.js';
 
 
-export function CanvasItem({ item, selectedIds, isAdmin, editingTextId, deleteItems, updateItem, setEditingTextId }) {
+export function CanvasItem({ item, selectedIds, isAdmin, editingTextId, updateItem, setEditingTextId }) {
   const isSel = selectedIds.includes(item.id) && isAdmin;
 
   if (!isSel) return null;
 
   // Connector type — delegate to specialized handle component
   if (item.type === "connector") {
-    return <ConnectorHandles item={item} deleteItems={deleteItems} />;
+    return <ConnectorHandles item={item} />;
   }
 
   // Render handles for non-connector items
@@ -44,7 +44,7 @@ export function CanvasItem({ item, selectedIds, isAdmin, editingTextId, deleteIt
             zIndex: Z.HANDLE_INFO,
           }} />
       )}
-      <ItemHandles item={item} deleteItems={deleteItems} />
+      <ItemHandles item={item} />
     </>
   );
 }
