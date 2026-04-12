@@ -30,7 +30,7 @@ export function useWebGLCanvas() {
         const device = await adapter.requestDevice();
         const context = canvas.getContext('webgpu');
         const format = navigator.gpu.getPreferredCanvasFormat();
-        context.configure({ device, format, alphaMode: 'opaque' });
+        context.configure({ device, format, alphaMode: 'premultiplied' });
 
         const renderer = new GPURenderer(canvas, device, context);
         renderer._onNeedsRedraw = () => {
@@ -86,6 +86,7 @@ export function useWebGLCanvas() {
     if (renderer && data) {
       renderer.render(data);
     }
+    return renderer?._overlays || [];
   }, []);
 
   const doHitTest = useCallback((screenX, screenY, items, panX, panY, zoom) => {

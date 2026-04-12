@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { generateMipmaps } from '../api.js';
+import { isGifSrc, isSvgSrc } from '../utils.js';
 
 // Track in-flight mipmap generation requests globally to avoid duplicates
 const pendingGenerations = new Set();
@@ -35,11 +36,8 @@ export function useMipmap(items, updateItem, vp) {
       !pendingGenerations.has(i.src)
     );
 
-    // Skip GIFs and SVGs on the client side too
-    const eligible = images.filter(i => {
-      const ext = i.src.split('?')[0].split('#')[0].split('.').pop().toLowerCase();
-      return ext !== 'gif' && ext !== 'svg';
-    });
+    // Skip GIFs (animated, rendered via DOM overlay) and SVGs (vector, no raster mipmaps)
+    const eligible = images.filter(i => !isGifSrc(i.src) && !isSvgSrc(i.src));
 
     // Only process R2-hosted images
     const r2Images = eligible.filter(i => i.src.includes('r2.dev'));

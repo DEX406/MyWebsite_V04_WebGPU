@@ -1,8 +1,14 @@
 import { GRID_SIZE, SNAP_ANGLE } from './constants.js';
 
-export function uid() { 
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`; 
+export function uid() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
+
+/* ── Media type helpers ── */
+const GIF_URL_RE = /\.gif(\?|#|$)/i;
+const SVG_URL_RE = /\.svg(\?|#|$)/i;
+export function isGifSrc(url) { return !!url && GIF_URL_RE.test(url); }
+export function isSvgSrc(url) { return !!url && SVG_URL_RE.test(url); }
 
 export function snap(v, on) { 
   return on ? Math.round(v / GRID_SIZE) * GRID_SIZE : v; 

@@ -1,5 +1,6 @@
-// WebGPU texture cache: loads images from URLs into GPUTextures, manages video textures.
+// WebGPU texture cache: loads static images from URLs into GPUTextures.
 // Supports FIFO eviction with placeholder protection — low-res placeholders are evicted last.
+// Videos and GIFs are rendered via DOM overlay (not GPU textures) for iOS compatibility.
 
 const MAX_TEXTURES = 200;
 
@@ -7,7 +8,6 @@ export class TextureCache {
   constructor(device, onTextureReady) {
     this.device = device;
     this.cache = new Map(); // url → { tex, view, width, height, ready, isPlaceholder, insertOrder }
-    this.videos = new Map(); // itemId → { video, tex, view, src, width, height, ready }
     this.loading = new Set();
     this.insertCounter = 0;
     this._onTextureReady = onTextureReady || null;
@@ -139,77 +139,6 @@ export class TextureCache {
     return bestEntry ? { entry: bestEntry, url: bestUrl } : { entry: this.fallback, url: null };
   }
 
-  getVideo(itemId, src) {
-    let entry = this.videos.get(itemId);
-    if (entry && entry.src === src) {
-      if (entry.video.readyState >= 2) {
-        // Re-create texture each frame from video (copyExternalImageToTexture requires matching size)
-        const vw = entry.video.videoWidth;
-        const vh = entry.video.videoHeight;
-        if (vw > 0 && vh > 0) {
-          // Reuse texture if same size, otherwise recreate
-          if (entry.width !== vw || entry.height !== vh) {
-            entry.tex.destroy();
-            entry.tex = this._createFromSource(entry.video, vw, vh);
-            entry.view = entry.tex.createView();
-          } else {
-            this.device.queue.copyExternalImageToTexture(
-              { source: entry.video, flipY: false },
-              { texture: entry.tex },
-              [vw, vh],
-            );
-          }
-          entry.ready = true;
-          entry.width = vw;
-          entry.height = vh;
-        }
-      }
-      return entry;
-    }
-
-    // Clean up old video
-    if (entry) {
-      entry.video.pause();
-      entry.video.src = '';
-      entry.tex.destroy();
-    }
-
-    const video = document.createElement('video');
-    video.crossOrigin = 'anonymous';
-    video.autoplay = true;
-    video.loop = true;
-    video.muted = true;
-    video.playsInline = true;
-    video.src = src;
-    video.play().catch(() => {});
-
-    // Start with 1x1 black placeholder
-    const tex1 = this._create1x1([0, 0, 0, 255]);
-    const newEntry = {
-      video,
-      tex: tex1.tex,
-      view: tex1.view,
-      src,
-      width: 1,
-      height: 1,
-      ready: false,
-    };
-    this.videos.set(itemId, newEntry);
-    return newEntry;
-  }
-
-  pruneVideos(activeIds) {
-    const activeSet = new Set(activeIds);
-    for (const [id, entry] of this.videos) {
-      if (!activeSet.has(id)) {
-        entry.video.pause();
-        entry.video.src = '';
-        entry.tex.destroy();
-        this.videos.delete(id);
-      }
-    }
-  }
-
   // Compute UV crop rect for object-fit: cover (pure math — no GPU calls)
   coverUV(texW, texH, itemW, itemH) {
     if (!texW || !texH || !itemW || !itemH) return [0, 0, 1, 1];
@@ -228,14 +157,8 @@ export class TextureCache {
 
   destroy() {
     for (const entry of this.cache.values()) entry.tex.destroy();
-    for (const entry of this.videos.values()) {
-      entry.video.pause();
-      entry.video.src = '';
-      entry.tex.destroy();
-    }
     this.fallback.tex.destroy();
     this.transparent.tex.destroy();
     this.cache.clear();
-    this.videos.clear();
   }
 }

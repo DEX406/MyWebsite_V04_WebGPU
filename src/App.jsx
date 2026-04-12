@@ -3,7 +3,7 @@ import { ZoomInIcon, ZoomOutIcon, GridIcon, HomeIcon, FloppyIcon, UndoIcon, Redo
 
 import { FONT, FONTS, DEFAULT_BG_GRID } from './constants.js';
 import { loadConfiguredFonts } from './fontLibrary.js';
-import { uid, snap, applyBg, isTyping, pasteItems, migrateItems, applyDragDelta } from './utils.js';
+import { uid, snap, isTyping, pasteItems, migrateItems, applyDragDelta, isGifSrc } from './utils.js';
 import { createBackupZip, restoreFromZip } from './backupRestore.js';
 import { tbBtn, tbSurface, tbSep, togBtn, infoText, panelSurface, UI_BG, UI_BORDER, Z } from './styles.js';
 import { CanvasItem } from './components/CanvasItem.jsx';
@@ -87,6 +87,81 @@ export default function App() {
   // ── WebGL renderer ──
   const webgl = useWebGLCanvas();
 
+  // ── Media overlay (DOM elements behind canvas for videos/GIFs) ──
+  const overlayRef = useRef(null);
+  const overlayElsRef = useRef(new Map()); // id → DOM element
+
+  const syncOverlays = useCallback((overlays, panX, panY, zoom) => {
+    const container = overlayRef.current;
+    if (!container) return;
+    const activeIds = new Set(overlays.map(o => o.id));
+    const els = overlayElsRef.current;
+
+    // Remove stale elements
+    for (const [id, el] of els) {
+      if (!activeIds.has(id)) {
+        if (el.tagName === 'VIDEO') { el.pause(); el.src = ''; }
+        el.remove();
+        els.delete(id);
+      }
+    }
+
+    // Create or update elements
+    for (const o of overlays) {
+      let el = els.get(o.id);
+      if (!el) {
+        if (o.type === 'video') {
+          el = document.createElement('video');
+          el.crossOrigin = 'anonymous';
+          el.autoplay = true;
+          el.loop = true;
+          el.muted = true;
+          el.playsInline = true;
+          el.src = o.src;
+          el.play().catch(() => {});
+        } else {
+          el = document.createElement('img');
+          el.crossOrigin = 'anonymous';
+          el.src = o.src;
+        }
+        el.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;object-fit:cover;transform-origin:center center;';
+        container.appendChild(el);
+        els.set(o.id, el);
+      }
+      // Update src if changed
+      if (el.src !== o.src && o.src) {
+        el.src = o.src;
+        if (el.tagName === 'VIDEO') el.play().catch(() => {});
+      }
+      // Position: world coords → screen coords via CSS transform
+      const screenX = o.x * zoom + panX;
+      const screenY = o.y * zoom + panY;
+      const screenW = o.w * zoom;
+      const screenH = o.h * zoom;
+      el.style.left = screenX + 'px';
+      el.style.top = screenY + 'px';
+      el.style.width = screenW + 'px';
+      el.style.height = screenH + 'px';
+      // Border radius on both CSS and GPU matte is intentional:
+      // the matte controls the canvas hole shape, CSS clips the DOM element
+      // so the browser skips compositing pixels hidden behind the opaque canvas.
+      el.style.borderRadius = (o.radius * zoom) + 'px';
+      el.style.transform = o.rotation ? `rotate(${o.rotation}deg)` : '';
+      el.style.transformOrigin = 'center center';
+    }
+  }, []);
+
+  // Cleanup overlay elements on unmount
+  useEffect(() => {
+    return () => {
+      for (const el of overlayElsRef.current.values()) {
+        if (el.tagName === 'VIDEO') { el.pause(); el.src = ''; }
+        el.remove();
+      }
+      overlayElsRef.current.clear();
+    };
+  }, []);
+
   // Wire up WebGL render trigger — called on every viewport change (pan/zoom/resize)
   useEffect(() => {
     drawBgRef.current = () => {
@@ -101,16 +176,18 @@ export default function App() {
       } else if (override) {
         renderItems = renderItems.map(i => i.id === override.id ? { ...i, ...override.props } : i);
       }
-      webgl.renderSync({
+      const panX = vp.panRef.current.x;
+      const panY = vp.panRef.current.y;
+      const zoom = vp.zoomRef.current;
+      const overlays = webgl.renderSync({
         items: renderItems,
-        panX: vp.panRef.current.x,
-        panY: vp.panRef.current.y,
-        zoom: vp.zoomRef.current,
+        panX, panY, zoom,
         bgGrid: bgGridRef.current,
         globalShadow: globalShadowRef.current,
         selectedIds: selectedIdsRef.current,
         editingTextId: editingTextIdRef.current,
       });
+      syncOverlays(overlays, panX, panY, zoom);
     };
     drawBgRef.current();
   }, []);
@@ -128,20 +205,6 @@ export default function App() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-
-  // Continuous render for video items (need to update video textures each frame)
-  useEffect(() => {
-    const hasVideo = items.some(i => i.type === 'video');
-    if (!hasVideo) return;
-    let running = true;
-    const loop = () => {
-      if (!running) return;
-      if (drawBgRef.current) drawBgRef.current();
-      requestAnimationFrame(loop);
-    };
-    requestAnimationFrame(loop);
-    return () => { running = false; };
-  }, [items]);
 
   // ── Load board on mount ──
   // Wait for both board data AND web fonts before setting items so text is
@@ -339,7 +402,7 @@ export default function App() {
     const id = uid();
     const c = viewCenter();
     const defaultW = snap(320, true), defaultH = snap(240, true);
-    setItemsAndSave(p => [...p, { id, type: "image", src: url, x: snap(c.x - defaultW / 2, true), y: snap(c.y - defaultH / 2, true), w: defaultW, h: defaultH, z: maxZ(p) + 1, radius: 2, rotation: 0 }]);
+    setItemsAndSave(p => [...p, { id, type: "image", isGif: true, src: url, x: snap(c.x - defaultW / 2, true), y: snap(c.y - defaultH / 2, true), w: defaultW, h: defaultH, z: maxZ(p) + 1, radius: 2, rotation: 0 }]);
     addImageToCanvas(url, { id, ...opts });
   };
 
@@ -471,7 +534,7 @@ export default function App() {
   const handleAddImageUrl = () => {
     const url = prompt("Enter image URL:");
     if (url) {
-      const isGif = /\.gif(\?|$)/i.test(url);
+      const isGif = isGifSrc(url);
       const onError = () => { setUploadStatus(`Failed to load ${isGif ? "GIF" : "image"} from URL`); setTimeout(() => setUploadStatus(""), 4000); };
       if (isGif) {
         addGifToCanvas(url, { onError });
@@ -624,8 +687,12 @@ export default function App() {
       <div ref={canvasRef} onPointerDown={handlePointerDown}
         style={{ width: "100%", height: "100%", cursor: dragging ? "move" : rotating ? "grabbing" : "grab", position: "relative", overflow: "hidden", touchAction: "none", zIndex: Z.CANVAS, isolation: "isolate" }}>
 
-        {/* WebGL canvas — renders grid + all content items */}
-        <canvas ref={webgl.setCanvasRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", imageRendering: "auto" }} />
+        {/* Media overlay — DOM video/img elements sit behind the WebGPU canvas.
+            Transparent matte cutouts in the canvas let them show through. */}
+        <div ref={overlayRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "hidden", zIndex: 0 }} />
+
+        {/* WebGPU canvas — renders grid + all content items + matte cutouts */}
+        <canvas ref={webgl.setCanvasRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", imageRendering: "auto", zIndex: 1 }} />
 
         {isAdmin && (
           <div style={{ position: "absolute", top: 0, left: 0, zIndex: Z.HANDLES, pointerEvents: "none" }}>
