@@ -87,6 +87,67 @@ export default function App() {
   // ── WebGL renderer ──
   const webgl = useWebGLCanvas();
 
+  // ── Media overlay (DOM elements behind canvas for videos/GIFs) ──
+  const overlayRef = useRef(null);
+  const overlayElsRef = useRef(new Map()); // id → DOM element
+
+  const syncOverlays = useCallback((overlays, panX, panY, zoom) => {
+    const container = overlayRef.current;
+    if (!container) return;
+    const activeIds = new Set(overlays.map(o => o.id));
+    const els = overlayElsRef.current;
+
+    // Remove stale elements
+    for (const [id, el] of els) {
+      if (!activeIds.has(id)) {
+        if (el.tagName === 'VIDEO') { el.pause(); el.src = ''; }
+        el.remove();
+        els.delete(id);
+      }
+    }
+
+    // Create or update elements
+    for (const o of overlays) {
+      let el = els.get(o.id);
+      if (!el) {
+        if (o.type === 'video') {
+          el = document.createElement('video');
+          el.crossOrigin = 'anonymous';
+          el.autoplay = true;
+          el.loop = true;
+          el.muted = true;
+          el.playsInline = true;
+          el.src = o.src;
+          el.play().catch(() => {});
+        } else {
+          el = document.createElement('img');
+          el.crossOrigin = 'anonymous';
+          el.src = o.src;
+        }
+        el.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;object-fit:cover;transform-origin:center center;';
+        container.appendChild(el);
+        els.set(o.id, el);
+      }
+      // Update src if changed
+      if (el.src !== o.src && o.src) {
+        el.src = o.src;
+        if (el.tagName === 'VIDEO') el.play().catch(() => {});
+      }
+      // Position: world coords → screen coords via CSS transform
+      const screenX = o.x * zoom + panX;
+      const screenY = o.y * zoom + panY;
+      const screenW = o.w * zoom;
+      const screenH = o.h * zoom;
+      el.style.left = screenX + 'px';
+      el.style.top = screenY + 'px';
+      el.style.width = screenW + 'px';
+      el.style.height = screenH + 'px';
+      el.style.borderRadius = (o.radius * zoom) + 'px';
+      el.style.transform = o.rotation ? `rotate(${o.rotation}deg)` : '';
+      el.style.transformOrigin = 'center center';
+    }
+  }, []);
+
   // Wire up WebGL render trigger — called on every viewport change (pan/zoom/resize)
   useEffect(() => {
     drawBgRef.current = () => {
@@ -101,16 +162,18 @@ export default function App() {
       } else if (override) {
         renderItems = renderItems.map(i => i.id === override.id ? { ...i, ...override.props } : i);
       }
-      webgl.renderSync({
+      const panX = vp.panRef.current.x;
+      const panY = vp.panRef.current.y;
+      const zoom = vp.zoomRef.current;
+      const overlays = webgl.renderSync({
         items: renderItems,
-        panX: vp.panRef.current.x,
-        panY: vp.panRef.current.y,
-        zoom: vp.zoomRef.current,
+        panX, panY, zoom,
         bgGrid: bgGridRef.current,
         globalShadow: globalShadowRef.current,
         selectedIds: selectedIdsRef.current,
         editingTextId: editingTextIdRef.current,
       });
+      syncOverlays(overlays, panX, panY, zoom);
     };
     drawBgRef.current();
   }, []);
@@ -128,20 +191,6 @@ export default function App() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-
-  // Continuous render for animated items (videos + GIFs need texture updates each frame)
-  useEffect(() => {
-    const hasAnimated = items.some(i => i.type === 'video' || (i.type === 'image' && (i.isGif || isGifSrc(i.src))));
-    if (!hasAnimated) return;
-    let running = true;
-    const loop = () => {
-      if (!running) return;
-      if (drawBgRef.current) drawBgRef.current();
-      requestAnimationFrame(loop);
-    };
-    requestAnimationFrame(loop);
-    return () => { running = false; };
-  }, [items]);
 
   // ── Load board on mount ──
   // Wait for both board data AND web fonts before setting items so text is
@@ -624,8 +673,12 @@ export default function App() {
       <div ref={canvasRef} onPointerDown={handlePointerDown}
         style={{ width: "100%", height: "100%", cursor: dragging ? "move" : rotating ? "grabbing" : "grab", position: "relative", overflow: "hidden", touchAction: "none", zIndex: Z.CANVAS, isolation: "isolate" }}>
 
-        {/* WebGL canvas — renders grid + all content items */}
-        <canvas ref={webgl.setCanvasRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", imageRendering: "auto" }} />
+        {/* Media overlay — DOM video/img elements sit behind the WebGPU canvas.
+            Transparent matte cutouts in the canvas let them show through. */}
+        <div ref={overlayRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "hidden", zIndex: 0 }} />
+
+        {/* WebGPU canvas — renders grid + all content items + matte cutouts */}
+        <canvas ref={webgl.setCanvasRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", imageRendering: "auto", zIndex: 1 }} />
 
         {isAdmin && (
           <div style={{ position: "absolute", top: 0, left: 0, zIndex: Z.HANDLES, pointerEvents: "none" }}>
