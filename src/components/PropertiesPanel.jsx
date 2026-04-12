@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { FONT, FONTS } from '../constants.js';
 import { itemShadowEnabled } from '../utils.js';
 import { uploadImage, serverResize, downloadImageViaProxy } from '../api.js';
@@ -130,19 +130,36 @@ const Section = ({ title, children }) => (
    Number pill – compact number input in pill
    ───────────────────────────────────────────── */
 function NumPill({ label, value, onChange, min, max, suffix = "" }) {
+  const [localVal, setLocalVal] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setLocalVal(String(value));
+  }, [value, focused]);
+
+  const commit = () => {
+    const n = Math.max(min, Math.min(max, +localVal || value));
+    onChange(n);
+    setLocalVal(String(n));
+  };
+
   return (
     <div style={{
       height: PILL_H, borderRadius: PILL_R, border: PILL_BRD,
       background: PILL_BG, display: "flex", alignItems: "center",
       flex: 1, overflow: "hidden", minWidth: 0,
     }}>
-      <span style={{ paddingLeft: 10, fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: LABEL_CLR, flexShrink: 0 }}>{label}</span>
-      <input type="number" min={min} max={max} value={value}
-        onChange={e => onChange(+e.target.value)}
+      {label && <span style={{ paddingLeft: 10, fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: LABEL_CLR, flexShrink: 0 }}>{label}</span>}
+      <input type="number" min={min} max={max} value={localVal}
+        onChange={e => setLocalVal(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => { setFocused(false); commit(); }}
+        onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }}
         style={{
           background: "transparent", border: "none", outline: "none",
           color: "rgba(194,192,182,0.82)", fontSize: 12, fontFamily: FONT,
           width: "100%", textAlign: "right", paddingRight: suffix ? 2 : 8,
+          paddingLeft: label ? 0 : 10,
           height: "100%",
         }}
       />
@@ -352,8 +369,8 @@ export function PropertiesPanel({ isAdmin, selectedIds, items, openColorPicker, 
           <select value={sel.fontFamily} onChange={e => updateAll({ fontFamily: e.target.value })} style={{ ...inp, appearance: "auto", cursor: "pointer" }}>
             {FONTS.map(f => <option key={f.value} value={f.value} style={{ background: "#1F1E1D" }}>{f.label}</option>)}
           </select>
-          <div style={{ display: "flex", gap: 4 }}>
-            <Slider label="Size" value={sel.fontSize || 12} min={8} max={200} onChange={v => updateAll({ fontSize: v })} suffix="px" />
+          <div style={{ display: "flex", gap: GAP }}>
+            <NumPill label="" value={sel.fontSize || 12} onChange={v => updateAll({ fontSize: v })} min={8} max={200} suffix="px" />
             <Toggle label="B" active={!!sel.bold} onClick={() => updateAll({ bold: !sel.bold })} />
             <Toggle label="I" active={!!sel.italic} onClick={() => updateAll({ italic: !sel.italic })} />
             {["left", "center", "right"].map(a => (

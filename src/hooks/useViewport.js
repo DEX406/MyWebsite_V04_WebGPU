@@ -1,6 +1,6 @@
 import { useRef, useCallback } from 'react';
 
-export const MIN_ZOOM = 0.1;
+export const MIN_ZOOM = 0.01;
 export const MAX_ZOOM = 4;
 
 export function useViewport() {
@@ -76,7 +76,7 @@ export function useViewport() {
     const z = zoomRef.current;
     const cx = Math.round((-panRef.current.x + r.width / 2) / z);
     const cy = Math.round((-panRef.current.y + r.height / 2) / z);
-    if (posDisplayRef.current) posDisplayRef.current.textContent = `X ${cx}   Y ${cy}`;
+    if (posDisplayRef.current) posDisplayRef.current.textContent = `X ${cx}\nY ${cy}`;
     if (zoomDisplayRef.current) zoomDisplayRef.current.textContent = `${Math.round(z * 100)}%`;
   }, []);
 

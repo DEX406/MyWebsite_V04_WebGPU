@@ -732,24 +732,24 @@ export default function App() {
         })()}
       </div>
 
-      {/* Zoom controls */}
-      <div data-ui style={{ position: "absolute", bottom: "calc(16px + env(safe-area-inset-bottom, 0px))", left: "calc(16px + env(safe-area-inset-left, 0px))", zIndex: Z.UI, ...tbSurface }}>
-        <button onClick={() => zoomTo(vp.zoomRef.current * 1.3)} style={tbBtn}><ZoomInIcon /></button>
-        <button onClick={() => zoomTo(vp.zoomRef.current / 1.3)} style={tbBtn}><ZoomOutIcon /></button>
-        <button onClick={goHome} title="Home view" style={tbBtn}><HomeIcon /></button>
-        {isAdmin && <button onClick={() => setSnapOn(!snapOn)} title={snapOn ? "Grid snap ON" : "Grid snap OFF"} style={snapOn ? { ...tbBtn, background: "rgba(44,132,219,0.12)", color: "#2C84DB" } : tbBtn}><GridIcon /></button>}
-        <div style={tbSep} />
-        <button ref={zoomDisplayRef} onClick={() => {
-          const rect = canvasRef.current.getBoundingClientRect();
-          const cx = (rect.width / 2 - vp.panRef.current.x) / vp.zoomRef.current;
-          const cy = (rect.height / 2 - vp.panRef.current.y) / vp.zoomRef.current;
-          animateTo({ x: rect.width / 2 - cx, y: rect.height / 2 - cy }, 1, 500);
-        }} style={{ padding: "0 9px", ...infoText, background: "none", border: "none", cursor: "pointer" }}>100%</button>
-      </div>
-
-      {/* Coordinates display */}
-      <div data-ui style={{ position: "absolute", bottom: "calc(56px + env(safe-area-inset-bottom, 0px))", left: "calc(16px + env(safe-area-inset-left, 0px))", zIndex: Z.UI, ...tbSurface }}>
-        <div ref={posDisplayRef} style={{ ...tbBtn, width: "auto", padding: "0 10px", cursor: "default", ...infoText }}>X 0   Y 0</div>
+      {/* Zoom controls + Coordinates */}
+      <div data-ui style={{ position: "absolute", bottom: "calc(16px + env(safe-area-inset-bottom, 0px))", left: "calc(16px + env(safe-area-inset-left, 0px))", zIndex: Z.UI, display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={tbSurface}>
+          <button onClick={goHome} title="Home view" style={tbBtn}><HomeIcon /></button>
+          <div ref={posDisplayRef} style={{ ...infoText, height: 32, padding: "0 10px", whiteSpace: "pre", lineHeight: 1.35, fontSize: 10, display: "flex", alignItems: "center" }}>X 0{"\n"}Y 0</div>
+        </div>
+        <div style={tbSurface}>
+          <button onClick={() => zoomTo(vp.zoomRef.current * 1.3)} style={tbBtn}><ZoomInIcon /></button>
+          <button onClick={() => zoomTo(vp.zoomRef.current / 1.3)} style={tbBtn}><ZoomOutIcon /></button>
+          {isAdmin && <button onClick={() => setSnapOn(!snapOn)} title={snapOn ? "Grid snap ON" : "Grid snap OFF"} style={snapOn ? { ...tbBtn, background: "rgba(44,132,219,0.12)", color: "#2C84DB" } : tbBtn}><GridIcon /></button>}
+          <div style={tbSep} />
+          <button ref={zoomDisplayRef} onClick={() => {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const cx = (rect.width / 2 - vp.panRef.current.x) / vp.zoomRef.current;
+            const cy = (rect.height / 2 - vp.panRef.current.y) / vp.zoomRef.current;
+            animateTo({ x: rect.width / 2 - cx, y: rect.height / 2 - cy }, 1, 500);
+          }} style={{ padding: "0 9px", ...infoText, background: "none", border: "none", cursor: "pointer" }}>100%</button>
+        </div>
       </div>
 
       {/* Left panel — Copy/Paste/Delete · Undo/Redo · Selection/Group, stacked */}
