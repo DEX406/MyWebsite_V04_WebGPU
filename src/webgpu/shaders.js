@@ -5,6 +5,7 @@
 // Uniform buffer byte sizes (for JS-side allocation):
 export const GRID_UNIFORM_SIZE = 128;
 export const QUAD_UNIFORM_SIZE = 160;
+export const MATTE_UNIFORM_SIZE = 160; // same layout as quad
 export const LINE_UNIFORM_SIZE = 48;
 export const CIRCLE_UNIFORM_SIZE = 48;
 
@@ -254,6 +255,91 @@ fn vs_main(@location(0) a_pos: vec2<f32>) -> @builtin(position) vec4<f32> {
 @fragment
 fn fs_main() -> @location(0) vec4<f32> {
   return u.color;
+}
+`;
+
+// ── Matte shader ──────────────────────────────────────────────────────────────
+// Renders transparent cutouts in the canvas for media items (videos, GIFs).
+// DOM elements behind the canvas show through the cutout holes.
+// Uses the same uniform layout as QUAD_SHADER for simplicity.
+// Blend mode: src=zero, dst=one-minus-src-alpha → erases framebuffer where matte=1.
+
+export const MATTE_SHADER = `
+struct QuadUniforms {
+  resolution:     vec2<f32>,
+  pan:            vec2<f32>,
+  zoom:           f32,
+  rotation:       f32,
+  radius:         f32,
+  opacity:        f32,
+  item_pos:       vec2<f32>,
+  item_size:      vec2<f32>,
+  pad_size:       vec2<f32>,
+  pad_offset:     vec2<f32>,
+  color:          vec4<f32>,
+  tex_crop:       vec4<f32>,
+  border_color:   vec4<f32>,
+  text_color:     vec4<f32>,
+  border_width:   f32,
+  textured:       f32,
+  has_shadow:     f32,
+  shadow_size:    f32,
+  shadow_opacity: f32,
+  is_selection:   f32,
+  text_alpha:     f32,
+  _pad:           f32,
+};
+
+struct MatteVsOutput {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+  @location(1) local_px: vec2<f32>,
+};
+
+@group(0) @binding(0) var<uniform> u: QuadUniforms;
+@group(1) @binding(0) var t_tex: texture_2d<f32>;
+@group(1) @binding(1) var s_tex: sampler;
+
+@vertex
+fn vs_main(@location(0) a_pos: vec2<f32>) -> MatteVsOutput {
+  var out: MatteVsOutput;
+  let local = a_pos * u.pad_size;
+  out.uv = a_pos;
+  out.local_px = local;
+
+  let item_center = u.pad_offset + u.item_size * 0.5;
+  let c = cos(u.rotation);
+  let s = sin(u.rotation);
+  let d = local - item_center;
+  let rotated = item_center + vec2<f32>(d.x * c - d.y * s, d.x * s + d.y * c);
+
+  let world = (u.item_pos - u.pad_offset) + rotated;
+  let screen = world * u.zoom + u.pan;
+  var ndc = screen / u.resolution * 2.0 - 1.0;
+  ndc.y = -ndc.y;
+  out.pos = vec4<f32>(ndc, 0.0, 1.0);
+  return out;
+}
+
+fn rounded_box_sdf(p: vec2<f32>, half_size: vec2<f32>, r: f32) -> f32 {
+  let q = abs(p) - half_size + r;
+  return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - r;
+}
+
+@fragment
+fn fs_main(in: MatteVsOutput) -> @location(0) vec4<f32> {
+  let item_local = in.local_px - u.pad_offset;
+  let p = item_local - u.item_size * 0.5;
+  let half_size = u.item_size * 0.5;
+  let r = min(u.radius, min(half_size.x, half_size.y));
+  let dist = rounded_box_sdf(p, half_size, r);
+
+  if (dist > 0.5) { discard; }
+  let mask = 1.0 - smoothstep(-0.5, 0.5, dist);
+
+  // With blend (zero, one-minus-src-alpha): framebuffer *= (1 - mask)
+  // mask=1 inside shape → pixel becomes transparent → DOM shows through
+  return vec4<f32>(0.0, 0.0, 0.0, mask * u.opacity);
 }
 `;
 

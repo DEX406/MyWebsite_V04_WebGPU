@@ -2,7 +2,7 @@
 // Renders: grid background, all content items, selection outlines, connectors.
 
 import {
-  GRID_SHADER, QUAD_SHADER, LINE_SHADER, CIRCLE_SHADER,
+  GRID_SHADER, QUAD_SHADER, MATTE_SHADER, LINE_SHADER, CIRCLE_SHADER,
   GRID_UNIFORM_SIZE, QUAD_UNIFORM_SIZE, LINE_UNIFORM_SIZE, CIRCLE_UNIFORM_SIZE,
 } from './shaders.js';
 import { TextureCache } from './TextureCache.js';
@@ -78,10 +78,23 @@ export class GPURenderer {
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
       ],
     });
+    const quadLayout = device.createPipelineLayout({ bindGroupLayouts: [this._quadBGL0, this._quadBGL1] });
     this.quadPipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this._quadBGL0, this._quadBGL1] }),
+      layout: quadLayout,
       vertex: { module: quadModule, entryPoint: 'vs_main', buffers: [vertexLayout] },
       fragment: { module: quadModule, entryPoint: 'fs_main', targets: [{ format, blend: blendAlpha }] },
+    });
+
+    // ── Matte (transparent cutout for media DOM overlay) ──
+    const matteModule = device.createShaderModule({ code: MATTE_SHADER });
+    const blendMatte = {
+      color: { srcFactor: 'zero', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+      alpha: { srcFactor: 'zero', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+    };
+    this.mattePipeline = device.createRenderPipeline({
+      layout: quadLayout, // same layout as quad — reuses bind groups
+      vertex: { module: matteModule, entryPoint: 'vs_main', buffers: [vertexLayout] },
+      fragment: { module: matteModule, entryPoint: 'fs_main', targets: [{ format, blend: blendMatte }] },
     });
 
     // ── Line ──
@@ -175,7 +188,7 @@ export class GPURenderer {
       this.context.configure({
         device: this.device,
         format: this.format,
-        alphaMode: 'opaque',
+        alphaMode: 'premultiplied',
       });
     }
   }
@@ -183,6 +196,7 @@ export class GPURenderer {
   // ── Main render ────────────────────────────────────────────────────────────
 
   render({ items, panX, panY, zoom, bgGrid, globalShadow, selectedIds, editingTextId }) {
+    this._overlays = []; // media overlay data for DOM positioning
     const device = this.device;
     const dpr = (window.devicePixelRatio || 1) * SUPERSAMPLE;
     const A = this._align;
@@ -379,13 +393,19 @@ export class GPURenderer {
 
     // ── Content layer ──
 
-    // Quad draws (items + selections)
+    // Quad + matte draws (interleaved for correct z-ordering)
     if (cQuadCount > 0) {
-      pass.setPipeline(this.quadPipeline);
+      let currentPipeline = null;
       pass.setVertexBuffer(0, this.quadVertBuf);
       for (let i = 0; i < cQuadCount; i++) {
+        const draw = allQuads[i];
+        const pipeline = draw.isMatte ? this.mattePipeline : this.quadPipeline;
+        if (pipeline !== currentPipeline) {
+          pass.setPipeline(pipeline);
+          currentPipeline = pipeline;
+        }
         pass.setBindGroup(0, this.quadBindGroup, [A * i]);
-        pass.setBindGroup(1, allQuads[i].texBindGroup);
+        pass.setBindGroup(1, draw.texBindGroup);
         pass.draw(6);
       }
     }
@@ -457,16 +477,6 @@ export class GPURenderer {
 
     pass.end();
     device.queue.submit([encoder.finish()]);
-
-    // Prune unused media textures (single pass)
-    const videoIds = [];
-    const gifSrcs = [];
-    for (const i of items) {
-      if (i.type === 'video') videoIds.push(i.id);
-      else if (i.type === 'image' && (i.isGif || isGifSrc(i.src))) gifSrcs.push(i.src);
-    }
-    this.texCache.pruneVideos(videoIds);
-    this.texCache.pruneGifs(gifSrcs);
   }
 
   // ── Collect draw commands ──────────────────────────────────────────────────
@@ -510,40 +520,63 @@ export class GPURenderer {
     let sampler = this.texCache.nearestSampler;
 
     if (item.type === 'image' || item.type === 'video') {
-      // ── Resolve texture entry based on media type ──
-      let entry;
       const isGif = item.type === 'image' && (item.isGif || isGifSrc(item.src));
+      const isMedia = item.type === 'video' || isGif;
 
-      if (item.type === 'video') {
-        entry = this.texCache.getVideo(item.id, item.src);
-      } else if (isGif) {
-        entry = this.texCache.getGif(item.src);
-        sampler = this.texCache.linearSampler;
-      } else {
-        // Static image — pick best available mipmap tier
-        const target = item.targetSrc || item.displaySrc || item.src;
-        const allTiers = [item.src, item.srcQ50, item.srcQ25, item.srcQ12, item.srcQ6];
-        const seen = new Set();
-        const candidates = [];
-        for (const c of [target, ...allTiers]) {
-          if (c && !seen.has(c)) { seen.add(c); candidates.push(c); }
-        }
-        entry = this.texCache.getBestReady(candidates, item.pixelated).entry;
+      if (isMedia) {
+        // ── Media item (video/GIF): shadow/border quad + matte cutout ──
+        // Content rendered via DOM overlay, not GPU texture.
+        u[33] = 0; // not textured
+        u.set([0, 0, 0, 0], 16); // transparent content (shadow/border only)
+
+        // Pass 1: shadow + border (normal blend)
+        draws.push({ uniforms: new Float32Array(u), texBindGroup: this._fallbackTexBG, isMatte: false });
+
+        // Pass 2: matte cutout (erases framebuffer inside rounded rect)
+        const mu = new Float32Array(40);
+        mu[0] = resW; mu[1] = resH;
+        mu[2] = panX; mu[3] = panY;
+        mu[4] = zoom;
+        mu[5] = (item.rotation || 0) * Math.PI / 180;
+        mu[6] = item.radius ?? 2;
+        mu[7] = 1.0; // opacity
+        mu[8] = item.x; mu[9] = item.y;
+        mu[10] = item.w; mu[11] = item.h;
+        // No shadow padding for the matte — just 1px AA margin
+        mu[12] = item.w + 2; mu[13] = item.h + 2;
+        mu[14] = 1; mu[15] = 1;
+        draws.push({ uniforms: mu, texBindGroup: this._fallbackTexBG, isMatte: true });
+
+        // Record overlay data for DOM element positioning
+        this._overlays.push({
+          id: item.id,
+          type: item.type === 'video' ? 'video' : 'gif',
+          src: item.src,
+          x: item.x, y: item.y,
+          w: item.w, h: item.h,
+          rotation: item.rotation || 0,
+          radius: item.radius ?? 2,
+          z: item.z,
+        });
+        return;
       }
 
-      // ── Common: crop, color, texture ──
+      // ── Static image — GPU texture path ──
+      const target = item.targetSrc || item.displaySrc || item.src;
+      const allTiers = [item.src, item.srcQ50, item.srcQ25, item.srcQ12, item.srcQ6];
+      const seen = new Set();
+      const candidates = [];
+      for (const c of [target, ...allTiers]) {
+        if (c && !seen.has(c)) { seen.add(c); candidates.push(c); }
+      }
+      const entry = this.texCache.getBestReady(candidates, item.pixelated).entry;
       const isReady = entry.ready !== false;
       u[33] = isReady ? 1 : 0;
       const texW = entry.width || item.naturalWidth || item.w;
       const texH = entry.height || item.naturalHeight || item.h;
       const crop = this.texCache.coverUV(texW, texH, item.w, item.h);
       u[20] = crop[0]; u[21] = crop[1]; u[22] = crop[2]; u[23] = crop[3];
-
-      if (item.type === 'video') {
-        u.set([0, 0, 0, 1], 16); // black while video loads
-      } else {
-        u.set(isReady ? [1, 1, 1, 1] : [0, 0, 0, 0], 16);
-      }
+      u.set(isReady ? [1, 1, 1, 1] : [0, 0, 0, 0], 16);
       texView = entry.view;
     } else if (item.type === 'text' || item.type === 'link') {
       const isEditing = editingTextId === item.id;
@@ -900,16 +933,13 @@ export class GPURenderer {
     const format = this._imgFormat(src);
     const srcType = this._imgSrcType(src);
 
-    // Dimensions: prefer stored natural size, then look up from the appropriate cache
+    // Dimensions: prefer stored natural size, then look up from static image texture cache
     let dimW = item.naturalWidth || null;
     let dimH = item.naturalHeight || null;
     if (!dimW || !dimH) {
-      let entry;
-      if (item.type === 'video') {
-        entry = this.texCache.videos.get(item.id);
-      } else if (item.isGif || isGifSrc(item.src)) {
-        entry = this.texCache.gifs.get(item.src);
-      } else {
+      // Videos/GIFs use DOM overlay — no GPU texture to read dimensions from.
+      // Static images can fall back to texture cache.
+      if (item.type !== 'video' && !item.isGif && !isGifSrc(item.src)) {
         const target = item.targetSrc || item.displaySrc || item.src;
         const tiers = [item.src, item.srcQ50, item.srcQ25, item.srcQ12, item.srcQ6];
         const seen = new Set();
@@ -917,11 +947,11 @@ export class GPURenderer {
         for (const c of [target, ...tiers]) {
           if (c && !seen.has(c)) { seen.add(c); candidates.push(c); }
         }
-        entry = this.texCache.getBestReady(candidates, item.pixelated).entry;
-      }
-      if (entry && entry.width > 1) {
-        dimW = entry.width;
-        dimH = entry.height;
+        const entry = this.texCache.getBestReady(candidates, item.pixelated).entry;
+        if (entry && entry.width > 1) {
+          dimW = entry.width;
+          dimH = entry.height;
+        }
       }
     }
 
