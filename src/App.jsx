@@ -124,7 +124,7 @@ export default function App() {
           el.crossOrigin = 'anonymous';
           el.src = o.src;
         }
-        el.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;object-fit:cover;transform-origin:center center;';
+        el.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;object-fit:cover;transform-origin:center center;image-rendering:pixelated;';
         container.appendChild(el);
         els.set(o.id, el);
       }
