@@ -734,13 +734,13 @@ export default function App() {
 
       {/* Zoom controls + Coordinates */}
       <div data-ui style={{ position: "absolute", bottom: "calc(16px + env(safe-area-inset-bottom, 0px))", left: "calc(16px + env(safe-area-inset-left, 0px))", zIndex: Z.UI, display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={tbSurface}>
-          <div ref={posDisplayRef} style={{ ...tbBtn, width: "auto", padding: "0 10px", cursor: "default", ...infoText }}>X 0   Y 0</div>
+        <div style={{ ...tbSurface, alignItems: "stretch" }}>
+          <button onClick={goHome} title="Home view" style={tbBtn}><HomeIcon /></button>
+          <div ref={posDisplayRef} style={{ ...infoText, padding: "4px 10px", whiteSpace: "pre", lineHeight: 1.4, fontSize: 10, display: "flex", alignItems: "center" }}>X 0{"\n"}Y 0</div>
         </div>
         <div style={tbSurface}>
           <button onClick={() => zoomTo(vp.zoomRef.current * 1.3)} style={tbBtn}><ZoomInIcon /></button>
           <button onClick={() => zoomTo(vp.zoomRef.current / 1.3)} style={tbBtn}><ZoomOutIcon /></button>
-          <button onClick={goHome} title="Home view" style={tbBtn}><HomeIcon /></button>
           {isAdmin && <button onClick={() => setSnapOn(!snapOn)} title={snapOn ? "Grid snap ON" : "Grid snap OFF"} style={snapOn ? { ...tbBtn, background: "rgba(44,132,219,0.12)", color: "#2C84DB" } : tbBtn}><GridIcon /></button>}
           <div style={tbSep} />
           <button ref={zoomDisplayRef} onClick={() => {
