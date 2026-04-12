@@ -3,7 +3,7 @@ import { ZoomInIcon, ZoomOutIcon, GridIcon, HomeIcon, FloppyIcon, UndoIcon, Redo
 
 import { FONT, FONTS, DEFAULT_BG_GRID } from './constants.js';
 import { loadConfiguredFonts } from './fontLibrary.js';
-import { uid, snap, applyBg, isTyping, pasteItems, migrateItems, applyDragDelta, isGifSrc } from './utils.js';
+import { uid, snap, isTyping, pasteItems, migrateItems, applyDragDelta, isGifSrc } from './utils.js';
 import { createBackupZip, restoreFromZip } from './backupRestore.js';
 import { tbBtn, tbSurface, tbSep, togBtn, infoText, panelSurface, UI_BG, UI_BORDER, Z } from './styles.js';
 import { CanvasItem } from './components/CanvasItem.jsx';
@@ -142,10 +142,24 @@ export default function App() {
       el.style.top = screenY + 'px';
       el.style.width = screenW + 'px';
       el.style.height = screenH + 'px';
+      // Border radius on both CSS and GPU matte is intentional:
+      // the matte controls the canvas hole shape, CSS clips the DOM element
+      // so the browser skips compositing pixels hidden behind the opaque canvas.
       el.style.borderRadius = (o.radius * zoom) + 'px';
       el.style.transform = o.rotation ? `rotate(${o.rotation}deg)` : '';
       el.style.transformOrigin = 'center center';
     }
+  }, []);
+
+  // Cleanup overlay elements on unmount
+  useEffect(() => {
+    return () => {
+      for (const el of overlayElsRef.current.values()) {
+        if (el.tagName === 'VIDEO') { el.pause(); el.src = ''; }
+        el.remove();
+      }
+      overlayElsRef.current.clear();
+    };
   }, []);
 
   // Wire up WebGL render trigger — called on every viewport change (pan/zoom/resize)
