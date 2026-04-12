@@ -708,7 +708,7 @@ export default function App() {
 
         {isAdmin && (
           <div style={{ position: "absolute", top: 0, left: 0, zIndex: Z.HANDLES, pointerEvents: "none" }}>
-            <div ref={canvasHandlesRef} style={{ transform: `translate(${vp.panRef.current.x}px,${vp.panRef.current.y}px) scale(${vp.zoomRef.current})`, transformOrigin: "0 0" }}>
+            <div ref={canvasHandlesRef} style={{ transform: `translate(${vp.panRef.current.x}px,${vp.panRef.current.y}px) scale(${vp.zoomRef.current})`, transformOrigin: "0 0", '--inv-zoom': 1 / vp.zoomRef.current }}>
               {sortedItems.map(item => <CanvasItem key={item.id} item={item} selectedIds={selectedIds} isAdmin={isAdmin} editingTextId={editingTextId} deleteItems={deleteItems} updateItem={updateItem} setEditingTextId={setEditingTextId} />)}
             </div>
           </div>
