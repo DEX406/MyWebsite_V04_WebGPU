@@ -1,16 +1,26 @@
 // WebGPU texture cache: loads static images from URLs into GPUTextures.
-// Supports FIFO eviction with placeholder protection — low-res placeholders are evicted last.
-// Videos and GIFs are rendered via DOM overlay (not GPU textures) for iOS compatibility.
+// Tracks GPU memory in bytes with adjustable limits.
+// Eviction order: placeholders first (smallest), then FIFO — but never evict on-screen textures.
 
-const MAX_TEXTURES = 200;
+const BYTES_PER_PIXEL = 4; // RGBA8
+
+// Default 512 MB limit — adjustable at runtime via setMemoryLimit()
+let memoryLimitBytes = 512 * 1024 * 1024;
 
 export class TextureCache {
   constructor(device, onTextureReady) {
     this.device = device;
-    this.cache = new Map(); // url → { tex, view, width, height, ready, isPlaceholder, insertOrder }
+    // url → { tex, view, width, height, ready, isPlaceholder, insertOrder, byteSize }
+    this.cache = new Map();
     this.loading = new Set();
     this.insertCounter = 0;
     this._onTextureReady = onTextureReady || null;
+
+    // Byte-based memory tracking
+    this.memoryUsedBytes = 0;
+
+    // Set of URLs currently visible on screen — updated each frame by the renderer
+    this._onScreenUrls = new Set();
 
     // Samplers (shared across all textures)
     this.nearestSampler = device.createSampler({
@@ -31,6 +41,25 @@ export class TextureCache {
     this.transparent = this._create1x1([0, 0, 0, 0]);
   }
 
+  // ── Memory limit API ────────────────────────────────────────────────────────
+
+  static getMemoryLimit() { return memoryLimitBytes; }
+  static setMemoryLimit(bytes) { memoryLimitBytes = Math.max(64 * 1024 * 1024, bytes); }
+
+  getMemoryUsed() { return this.memoryUsedBytes; }
+  getMemoryLimit() { return memoryLimitBytes; }
+
+  /** Mark which URLs are currently visible so eviction can protect them. */
+  setOnScreenUrls(urls) {
+    this._onScreenUrls = urls;
+  }
+
+  // ── Internal helpers ────────────────────────────────────────────────────────
+
+  _texBytes(w, h) {
+    return w * h * BYTES_PER_PIXEL;
+  }
+
   _create1x1(rgba) {
     const tex = this.device.createTexture({
       size: [1, 1],
@@ -43,7 +72,7 @@ export class TextureCache {
       { bytesPerRow: 4 },
       [1, 1],
     );
-    return { tex, view: tex.createView(), width: 1, height: 1, ready: true };
+    return { tex, view: tex.createView(), width: 1, height: 1, ready: true, byteSize: 4 };
   }
 
   _createFromSource(source, w, h) {
@@ -66,21 +95,44 @@ export class TextureCache {
     return !!(entry && entry.ready);
   }
 
+  // ── Eviction ──────────────────────────────────────────────────────────────
+
   _evict() {
-    if (this.cache.size <= MAX_TEXTURES) return;
+    if (this.memoryUsedBytes <= memoryLimitBytes) return;
+
     const entries = [...this.cache.entries()]
-      .map(([url, entry]) => ({ url, ...entry }))
-      .sort((a, b) => a.insertOrder - b.insertOrder);
-    const nonPlaceholders = entries.filter(e => !e.isPlaceholder);
-    const placeholders = entries.filter(e => e.isPlaceholder);
-    const evictOrder = [...nonPlaceholders, ...placeholders];
-    const toEvict = this.cache.size - MAX_TEXTURES;
-    for (let i = 0; i < toEvict && i < evictOrder.length; i++) {
+      .map(([url, entry]) => ({ url, ...entry }));
+
+    // Separate into buckets: on-screen (protected), placeholders, non-placeholders
+    const onScreen = [];
+    const placeholders = [];
+    const nonPlaceholders = [];
+
+    for (const e of entries) {
+      if (this._onScreenUrls.has(e.url)) {
+        onScreen.push(e); // never evict
+      } else if (e.isPlaceholder) {
+        placeholders.push(e);
+      } else {
+        nonPlaceholders.push(e);
+      }
+    }
+
+    // Eviction order: placeholders first (smallest/cheapest), then non-placeholders FIFO
+    // Within each group, sort by insertOrder (oldest first = FIFO)
+    placeholders.sort((a, b) => a.insertOrder - b.insertOrder);
+    nonPlaceholders.sort((a, b) => a.insertOrder - b.insertOrder);
+    const evictOrder = [...placeholders, ...nonPlaceholders];
+
+    for (let i = 0; i < evictOrder.length && this.memoryUsedBytes > memoryLimitBytes; i++) {
       const e = evictOrder[i];
+      this.memoryUsedBytes -= e.byteSize;
       e.tex.destroy();
       this.cache.delete(e.url);
     }
   }
+
+  // ── Public API ────────────────────────────────────────────────────────────
 
   get(url, pixelated = false, isPlaceholder = false) {
     if (!url) return this.transparent;
@@ -93,17 +145,22 @@ export class TextureCache {
       img.crossOrigin = 'anonymous';
       img.onload = () => {
         this.loading.delete(url);
-        const tex = this._createFromSource(img, img.naturalWidth, img.naturalHeight);
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        const byteSize = this._texBytes(w, h);
+        const tex = this._createFromSource(img, w, h);
         const entry = {
           tex,
           view: tex.createView(),
-          width: img.naturalWidth,
-          height: img.naturalHeight,
+          width: w,
+          height: h,
           ready: true,
           isPlaceholder,
           insertOrder: this.insertCounter++,
+          byteSize,
         };
         this.cache.set(url, entry);
+        this.memoryUsedBytes += byteSize;
         this._evict();
         if (this._onTextureReady) this._onTextureReady();
       };
@@ -160,5 +217,6 @@ export class TextureCache {
     this.fallback.tex.destroy();
     this.transparent.tex.destroy();
     this.cache.clear();
+    this.memoryUsedBytes = 0;
   }
 }

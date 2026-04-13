@@ -233,6 +233,18 @@ export class GPURenderer {
     const resW = cssW * dpr;
     const resH = cssH * dpr;
 
+    // Build set of texture URLs currently on-screen so eviction protects them
+    const onScreenUrls = new Set();
+    for (const item of sorted) {
+      if (item.type === 'connector') continue;
+      if (item.type !== 'image' || !item.src) continue;
+      if (item.x + item.w < vpLeft || item.x > vpRight || item.y + item.h < vpTop || item.y > vpBottom) continue;
+      // Collect all tier URLs this visible item might use
+      const urls = [item.targetSrc, item.displaySrc, item.src, item.srcQ50, item.srcQ25, item.srcQ12, item.srcQ6];
+      for (const u of urls) { if (u) onScreenUrls.add(u); }
+    }
+    this.texCache.setOnScreenUrls(onScreenUrls);
+
     const contentDrawOrder = [];
 
     for (const item of sorted) {

@@ -16,6 +16,8 @@ export function useViewport() {
 
   const posDisplayRef = useRef(null);
   const zoomDisplayRef = useRef(null);
+  const memDisplayRef = useRef(null);
+  const texCacheRef = useRef(null); // set by App after renderer init, for memory readout
 
   // Settled callback — fires when zoom/pan animation ends or user stops interacting
   const settledTimerRef = useRef(null);
@@ -80,6 +82,13 @@ export function useViewport() {
     const cy = Math.round((-panRef.current.y + r.height / 2) / z);
     if (posDisplayRef.current) posDisplayRef.current.textContent = `X ${cx}\nY ${cy}`;
     if (zoomDisplayRef.current) zoomDisplayRef.current.textContent = `${Math.round(z * 100)}%`;
+    // Memory readout (admin mode only — element won't exist for non-admins)
+    if (memDisplayRef.current && texCacheRef.current) {
+      const tc = texCacheRef.current;
+      const usedMB = (tc.getMemoryUsed() / (1024 * 1024)).toFixed(1);
+      const limitMB = (tc.getMemoryLimit() / (1024 * 1024)).toFixed(0);
+      memDisplayRef.current.textContent = `GPU ${usedMB} / ${limitMB} MB`;
+    }
   }, []);
 
   const updateDisplays = useCallback(() => {
@@ -163,7 +172,7 @@ export function useViewport() {
   return {
     panRef, zoomRef, isPanningRef, panStartRef, homeViewRef,
     canvasRef, canvasHandlesRef, drawBgRef,
-    posDisplayRef, zoomDisplayRef,
+    posDisplayRef, zoomDisplayRef, memDisplayRef, texCacheRef,
     applyTransform, updateDisplays, viewCenter, zoomTo, animateTo, goHome, setHome,
     getViewportBounds, onSettledRef,
   };

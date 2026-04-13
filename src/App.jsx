@@ -83,7 +83,7 @@ export default function App() {
 
   // ── Viewport ──
   const vp = useViewport();
-  const { canvasRef, canvasHandlesRef, drawBgRef, posDisplayRef, zoomDisplayRef, applyTransform, updateDisplays, viewCenter, zoomTo, animateTo, goHome, setHome } = vp;
+  const { canvasRef, canvasHandlesRef, drawBgRef, posDisplayRef, zoomDisplayRef, memDisplayRef, texCacheRef, applyTransform, updateDisplays, viewCenter, zoomTo, animateTo, goHome, setHome } = vp;
 
   // ── WebGL renderer ──
   const webgl = useWebGLCanvas();
@@ -173,6 +173,18 @@ export default function App() {
       overlayElsRef.current.clear();
     };
   }, []);
+
+  // Wire texture cache ref for memory readout (updated lazily — renderer inits async)
+  useEffect(() => {
+    const check = () => {
+      if (webgl.rendererRef.current) {
+        texCacheRef.current = webgl.rendererRef.current.texCache;
+      } else {
+        requestAnimationFrame(check);
+      }
+    };
+    check();
+  }, [texCacheRef, webgl.rendererRef]);
 
   // Wire up WebGL render trigger — called on every viewport change (pan/zoom/resize)
   useEffect(() => {
@@ -734,6 +746,7 @@ export default function App() {
 
       {/* Zoom controls + Coordinates */}
       <div data-ui style={{ position: "absolute", bottom: "calc(16px + env(safe-area-inset-bottom, 0px))", left: "calc(16px + env(safe-area-inset-left, 0px))", zIndex: Z.UI, display: "flex", flexDirection: "column", gap: 4 }}>
+        {isAdmin && <div ref={memDisplayRef} style={{ ...infoText, fontSize: 9, padding: "2px 10px", opacity: 0.5 }}>GPU 0.0 / 512 MB</div>}
         <div style={tbSurface}>
           <button onClick={goHome} title="Home view" style={tbBtn}><HomeIcon /></button>
           <div ref={posDisplayRef} style={{ ...infoText, height: 32, padding: "0 10px", whiteSpace: "pre", lineHeight: 1.35, fontSize: 10, display: "flex", alignItems: "center" }}>X 0{"\n"}Y 0</div>

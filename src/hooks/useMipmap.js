@@ -12,8 +12,11 @@ const pendingGenerations = new Set();
  *   - placeholderSrc: always the lowest available variant (loaded first, cheap)
  *   - targetSrc: the DPI-appropriate variant for crisp rendering
  *
- * The renderer should show whichever is loaded, preferring targetSrc when ready.
- * This prevents blanks: the placeholder stays visible until the target is loaded.
+ * Key behaviours:
+ *   - MIP assessment ONLY runs when zoom/pan settles (not during active zoom)
+ *   - Off-screen items keep their current targetSrc (highest res already loaded)
+ *     so GPU memory retains that texture for fast redraw when scrolling back
+ *   - Only upgrades targetSrc to higher quality, never downgrades
  */
 export function useMipmap(items, updateItem, vp) {
   const [settled, setSettled] = useState(0); // increments on each settle
@@ -70,8 +73,12 @@ export function useMipmap(items, updateItem, vp) {
       if (!item.srcQ50 && !item.srcQ25 && !item.srcQ12 && !item.srcQ6) continue; // no variants available
 
       const isOnscreen = itemIsOnscreen(item, bounds);
-      const target = pickTier(item, zoom, isOnscreen);
+      const needed = pickTier(item, zoom, isOnscreen);
       const placeholder = lowestTier(item);
+
+      // Never downgrade: if the item already has a higher-res targetSrc loaded,
+      // keep it. This preserves GPU memory for fast redraw when scrolling back.
+      const target = higherTier(item, needed, item.targetSrc);
 
       const updates = {};
       if (target !== item.targetSrc) updates.targetSrc = target;
@@ -85,7 +92,7 @@ export function useMipmap(items, updateItem, vp) {
     }
   }, [vp, updateItem]);
 
-  // Re-evaluate on every settle event
+  // Re-evaluate on every settle event (zoom/pan has stopped)
   useEffect(() => {
     if (settled > 0) computeDisplaySources();
   }, [settled, computeDisplaySources]);
@@ -114,16 +121,38 @@ function lowestTier(item) {
   return item.srcQ6 || item.srcQ12 || item.srcQ25 || item.srcQ50 || item.src;
 }
 
+// Tier ordering from lowest quality to highest
+const TIER_KEYS = ['srcQ6', 'srcQ12', 'srcQ25', 'srcQ50', 'src'];
+
+function tierIndex(item, url) {
+  if (!url) return -1;
+  for (let i = 0; i < TIER_KEYS.length; i++) {
+    const key = TIER_KEYS[i];
+    if (key === 'src' ? item.src === url : item[key] === url) return i;
+  }
+  return -1;
+}
+
+/**
+ * Returns whichever of `a` or `b` is the higher-quality tier for the given item.
+ * If either is null/undefined, returns the other.
+ */
+function higherTier(item, a, b) {
+  if (!b) return a;
+  if (!a) return b;
+  const ai = tierIndex(item, a);
+  const bi = tierIndex(item, b);
+  return ai >= bi ? a : b;
+}
+
 function pickTier(item, zoom, isOnscreen) {
-  // Off-screen: always use smallest available variant
+  // Off-screen: request the lowest tier (but higherTier() in the caller
+  // will prevent actual downgrade if a better version is already loaded)
   if (!isOnscreen) {
     return lowestTier(item);
   }
 
   // On-screen: DPI-aware selection
-  // The frame crops the image with object-fit:cover, so the image may be
-  // larger than the frame. Compute the actual image size as rendered (before
-  // cropping) so mipmap selection reflects the true displayed resolution.
   const natW = item.naturalWidth || item.w;
   const natH = item.naturalHeight || item.h;
   const coverScale = Math.max(item.w / natW, item.h / natH);
