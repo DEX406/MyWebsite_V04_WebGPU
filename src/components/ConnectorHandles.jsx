@@ -11,7 +11,7 @@ export function ConnectorHandles({ item }) {
   const handleX = orient === "h" ? elbowX : midX;
   const handleY = orient === "h" ? midY : elbowY;
 
-  const hS = { position: "absolute", width: 18, height: 18, background: "transparent", border: "none", borderRadius: "50%", transform: "translate(-50%, -50%) scale(var(--inv-zoom, 1))", cursor: "move", pointerEvents: "auto" };
+  const hS = { position: "absolute", width: 32, height: 32, background: "transparent", border: "none", borderRadius: "50%", transform: "translate(-50%, -50%) scale(var(--inv-zoom, 1))", cursor: "move", pointerEvents: "auto" };
 
   return (
     <div style={{ position: "absolute", left: 0, top: 0, width: 0, height: 0, zIndex: Z.HANDLE_GRIP, pointerEvents: "none" }}>

@@ -1,6 +1,6 @@
 import { Z } from '../styles.js';
 
-const HIT = 64;
+const HIT = 32;
 const ROD_LEN = 36;
 
 const hitBase = {
