@@ -223,15 +223,20 @@ export class GPURenderer {
 
     const bgRgb = hexToRgb(bgGrid.bgColor || '#141413');
 
+    // DPR-scaled viewport values (used by blur passes and main render)
+    const panDpr = panX * dpr;
+    const panDprY = panY * dpr;
+    const zoomDpr = zoom * dpr;
+    const resW = cssW * dpr;
+    const resH = cssH * dpr;
+
     // ── Phase 0: Render blur offscreen textures ──
     const sorted = [...items].sort((a, b) => a.z - b.z);
     this._currentSorted = sorted; // available to _findMediaBehind
     const blurItems = sorted.filter(i => i.bgBlur && i.type !== 'connector');
-    const blurEncoder = (blurItems.length > 0) ? device.createCommandEncoder() : null;
 
     if (blurItems.length > 0) {
-      this._renderBlurPasses(blurEncoder, blurItems, sorted, zoomDpr, bgRgb, bgGrid, globalShadow, editingTextId);
-      device.queue.submit([blurEncoder.finish()]);
+      this._renderBlurPasses(blurItems, sorted, zoomDpr, bgRgb, bgGrid, globalShadow, editingTextId);
     }
     // Cleanup blur textures for items no longer blurred
     const activeBlurIds = new Set(blurItems.map(i => i.id));
@@ -252,12 +257,6 @@ export class GPURenderer {
     const vpTop = -panY / zoom - marginY;
     const vpRight = (cssW - panX) / zoom + marginX;
     const vpBottom = (cssH - panY) / zoom + marginY;
-
-    const panDpr = panX * dpr;
-    const panDprY = panY * dpr;
-    const zoomDpr = zoom * dpr;
-    const resW = cssW * dpr;
-    const resH = cssH * dpr;
 
     const contentDrawOrder = [];
 
@@ -578,6 +577,19 @@ export class GPURenderer {
             mediaBehind,
           });
         }
+
+        // Pass 4: text glyph overlay (text/link items still need their text drawn on top)
+        if ((item.type === 'text' || item.type === 'link') && editingTextId !== item.id) {
+          const entry = this.textRenderer.get(item);
+          const textRgba = hexToRgba(item.color || '#C2C0B6');
+          const tu = new Float32Array(u);
+          tu[12] = item.w; tu[13] = item.h;
+          tu[14] = 0; tu[15] = 0;
+          tu[33] = 0; tu[34] = 0; tu[38] = 1; // textAlpha
+          tu.set(textRgba, 28);
+          const texBG = this._getTexBindGroup(entry.view, this.textRenderer.sampler);
+          draws.push({ uniforms: tu, texBindGroup: texBG });
+        }
         return;
       }
       // If no blur texture yet (shouldn't happen), fall through to normal rendering
@@ -877,8 +889,10 @@ export class GPURenderer {
     }
   }
 
-  /** Render items below each blur element into a small offscreen texture. */
-  _renderBlurPasses(encoder, blurItems, sorted, zoomDpr, bgRgb, bgGrid, globalShadow, editingTextId) {
+  /** Render items below each blur element into a small offscreen texture.
+   *  Each blur element gets its own command buffer submission to avoid
+   *  uniform buffer conflicts between sequential render passes. */
+  _renderBlurPasses(blurItems, sorted, zoomDpr, bgRgb, bgGrid, globalShadow, editingTextId) {
     const device = this.device;
     const A = this._align;
     const scale = this._blurScale;
@@ -897,25 +911,28 @@ export class GPURenderer {
       const offPanX = -blurItem.x * offZoom;
       const offPanY = -blurItem.y * offZoom;
 
-      // Collect items below the blur element that intersect its bounds
+      // Collect items below the blur element that intersect its bounds.
+      // Skip media (video/GIF) — they're DOM-rendered and handled by blur DOM overlays.
+      // Skip other blur items to avoid recursion.
       const draws = [];
       for (const item of sorted) {
         if (item.z >= blurItem.z) break;
-        if (item.bgBlur) continue; // don't recurse blur
-        if (item.type === 'connector') continue; // skip connectors for blur bg
+        if (item.bgBlur) continue;
+        if (item.type === 'connector') continue;
+        if (item.type === 'video') continue;
+        if (item.type === 'image' && (item.isGif || isGifSrc(item.src))) continue;
         // Intersection test
         if (item.x + item.w < blurItem.x || item.x > blurItem.x + blurItem.w) continue;
         if (item.y + item.h < blurItem.y || item.y > blurItem.y + blurItem.h) continue;
         this._collectItem(item, offPanX, offPanY, offZoom, blurW, blurH, globalShadow, editingTextId, draws);
       }
 
-      // Write grid uniforms for offscreen (just fills with bg color, grid dots are invisible at 1/20th)
+      // Write grid uniforms for offscreen (fills with bg color; grid dots invisible at 1/20th)
       const gridData = new Float32Array(32);
       gridData[0] = offPanX; gridData[1] = offPanY;
       gridData[2] = offZoom;
       gridData[4] = blurW; gridData[5] = blurH;
       gridData.set([bgRgb[0], bgRgb[1], bgRgb[2], 1], 8);
-      // Grid dots disabled in offscreen (too small to matter)
       device.queue.writeBuffer(this._blurGridUniformBuf, 0, gridData);
 
       // Write quad uniforms for offscreen draws
@@ -927,7 +944,9 @@ export class GPURenderer {
         device.queue.writeBuffer(this._blurQuadUniformBuf, 0, new Uint8Array(quadBuf));
       }
 
-      // Render pass into blur texture
+      // Each blur element gets its own encoder+submit so uniform buffers
+      // are consumed before the next blur element overwrites them.
+      const encoder = device.createCommandEncoder();
       const pass = encoder.beginRenderPass({
         colorAttachments: [{
           view: blurTex.view,
@@ -959,6 +978,7 @@ export class GPURenderer {
       }
 
       pass.end();
+      device.queue.submit([encoder.finish()]);
     }
   }
 
