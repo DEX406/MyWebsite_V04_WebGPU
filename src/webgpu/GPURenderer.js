@@ -36,6 +36,10 @@ export class GPURenderer {
     this._align = Math.max(256, device.limits.minUniformBufferOffsetAlignment);
     this._bindGroupCache = new WeakMap(); // GPUTextureView → GPUBindGroup
 
+    // Blur effect: offscreen textures for 1/20th-res background capture
+    this._blurTextures = new Map(); // itemId → { texture, view, width, height }
+    this._blurScale = 1 / 20;
+
     this._initPipelines();
     this._initBuffers();
   }
@@ -146,6 +150,13 @@ export class GPURenderer {
     this.lineBindGroup = device.createBindGroup({ layout: this._lineBGL, entries: [{ binding: 0, resource: { buffer: this.lineUniformBuf, size: LINE_UNIFORM_SIZE } }] });
     this.circleBindGroup = device.createBindGroup({ layout: this._circleBGL, entries: [{ binding: 0, resource: { buffer: this.circleUniformBuf, size: CIRCLE_UNIFORM_SIZE } }] });
 
+    // Blur offscreen: separate uniform buffer so blur passes don't conflict with main render
+    const MAX_BLUR_DRAWS = 256;
+    this._blurQuadUniformBuf = device.createBuffer({ size: A * MAX_BLUR_DRAWS, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this._blurQuadBindGroup = device.createBindGroup({ layout: this._quadBGL0, entries: [{ binding: 0, resource: { buffer: this._blurQuadUniformBuf, size: QUAD_UNIFORM_SIZE } }] });
+    this._blurGridUniformBuf = device.createBuffer({ size: GRID_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this._blurGridBindGroup = device.createBindGroup({ layout: this._gridBGL, entries: [{ binding: 0, resource: { buffer: this._blurGridUniformBuf } }] });
+
     // Fallback texture bind group (used when no texture is bound)
     this._fallbackTexBG = this._getTexBindGroup(this.texCache.fallback.view, this.texCache.nearestSampler);
   }
@@ -210,13 +221,28 @@ export class GPURenderer {
     const cssW = canvasW / dpr;
     const cssH = canvasH / dpr;
 
+    const bgRgb = hexToRgb(bgGrid.bgColor || '#141413');
+
+    // ── Phase 0: Render blur offscreen textures ──
+    const sorted = [...items].sort((a, b) => a.z - b.z);
+    this._currentSorted = sorted; // available to _findMediaBehind
+    const blurItems = sorted.filter(i => i.bgBlur && i.type !== 'connector');
+    const blurEncoder = (blurItems.length > 0) ? device.createCommandEncoder() : null;
+
+    if (blurItems.length > 0) {
+      this._renderBlurPasses(blurEncoder, blurItems, sorted, zoomDpr, bgRgb, bgGrid, globalShadow, editingTextId);
+      device.queue.submit([blurEncoder.finish()]);
+    }
+    // Cleanup blur textures for items no longer blurred
+    const activeBlurIds = new Set(blurItems.map(i => i.id));
+    this._cleanupBlurTextures(activeBlurIds);
+
     // ── Phase 1: Collect all draw commands ──
 
     const quadDraws = [];   // { uniforms: Float32Array(40), texView, sampler }
     const lineDraws = [];   // { uniforms: Float32Array(12), verts: Float32Array }
     const circleDraws = []; // { uniforms: Float32Array(12) }
 
-    const sorted = [...items].sort((a, b) => a.z - b.z);
     const selSet = new Set(selectedIds || []);
 
     // Viewport culling
@@ -290,7 +316,6 @@ export class GPURenderer {
     // ── Phase 2: Upload uniform data ──
 
     // Grid uniforms
-    const bgRgb = hexToRgb(bgGrid.bgColor || '#141413');
     const gridData = new Float32Array(32);
     gridData[0] = panDpr; gridData[1] = panDprY;
     gridData[2] = zoomDpr;
@@ -505,6 +530,58 @@ export class GPURenderer {
 
     let texView = null;
     let sampler = this.texCache.nearestSampler;
+
+    // ── Blur element: render blur texture as background ──
+    if (item.bgBlur) {
+      const blurTex = this._blurTextures.get(item.id);
+      if (blurTex) {
+        // Pass 1: shadow + border quad (with transparent fill so shadow shows)
+        u[33] = 0; u.set([0, 0, 0, 0], 16);
+        draws.push({ uniforms: new Float32Array(u), texBindGroup: this._fallbackTexBG, isMatte: false });
+
+        // Pass 2: blur texture quad (content fill, no shadow)
+        const bu = new Float32Array(u);
+        bu[12] = item.w; bu[13] = item.h; // no shadow padding
+        bu[14] = 0; bu[15] = 0;
+        bu[33] = 1; // textured
+        bu[34] = 0; // no shadow on this pass
+        bu.set([1, 1, 1, 1], 16); // white tint — show texture as-is
+        bu[20] = 0; bu[21] = 0; bu[22] = 1; bu[23] = 1; // full UV
+        const texBG = this._getTexBindGroup(blurTex.view, this.texCache.linearSampler);
+        draws.push({ uniforms: bu, texBindGroup: texBG, isMatte: false });
+
+        // Pass 3: matte cutout for any videos/GIFs behind this blur element
+        // Check if any media overlays sit below this item in z-order
+        const mediaBehind = this._findMediaBehind(item);
+        if (mediaBehind.length > 0) {
+          const mu = new Float32Array(40);
+          mu[0] = resW; mu[1] = resH; mu[2] = panX; mu[3] = panY;
+          mu[4] = zoom;
+          mu[5] = (item.rotation || 0) * Math.PI / 180;
+          mu[6] = item.radius ?? 2;
+          mu[7] = 1.0;
+          mu[8] = item.x; mu[9] = item.y;
+          mu[10] = item.w; mu[11] = item.h;
+          mu[12] = item.w + 2; mu[13] = item.h + 2;
+          mu[14] = 1; mu[15] = 1;
+          draws.push({ uniforms: mu, texBindGroup: this._fallbackTexBG, isMatte: true });
+
+          // Record blur overlay for DOM — blurred video/GIF copies
+          this._overlays.push({
+            id: item.id,
+            type: 'blur',
+            x: item.x, y: item.y,
+            w: item.w, h: item.h,
+            rotation: item.rotation || 0,
+            radius: item.radius ?? 2,
+            z: item.z,
+            mediaBehind,
+          });
+        }
+        return;
+      }
+      // If no blur texture yet (shouldn't happen), fall through to normal rendering
+    }
 
     if (item.type === 'image' || item.type === 'video') {
       const isGif = item.type === 'image' && (item.isGif || isGifSrc(item.src));
@@ -740,11 +817,149 @@ export class GPURenderer {
     return item.shadow ?? (item.type !== 'shape' && item.type !== 'text');
   }
 
+  /** Find video/GIF items below a blur element that intersect its bounds. */
+  _findMediaBehind(blurItem) {
+    if (!this._currentSorted) return [];
+    const result = [];
+    for (const item of this._currentSorted) {
+      if (item.z >= blurItem.z) break;
+      if (item.type === 'connector') continue;
+      const isGif = item.type === 'image' && (item.isGif || isGifSrc(item.src));
+      const isMedia = item.type === 'video' || isGif;
+      if (!isMedia) continue;
+      // Intersection test
+      if (item.x + item.w < blurItem.x || item.x > blurItem.x + blurItem.w) continue;
+      if (item.y + item.h < blurItem.y || item.y > blurItem.y + blurItem.h) continue;
+      result.push({
+        id: item.id,
+        type: item.type === 'video' ? 'video' : 'gif',
+        src: item.src,
+        x: item.x, y: item.y,
+        w: item.w, h: item.h,
+        rotation: item.rotation || 0,
+        radius: item.radius ?? 2,
+        z: item.z,
+      });
+    }
+    return result;
+  }
+
   _getBgColor(item) {
     if (!item.bgColor || item.bgColor === 'transparent') return [0, 0, 0, 0];
     const op = item.bgOpacity ?? 1;
     if (op <= 0) return [0, 0, 0, 0];
     return [...hexToRgb(item.bgColor), op];
+  }
+
+  // ── Blur: offscreen 1/20th-res background capture ─────────────────────────
+
+  _getOrCreateBlurTexture(id, width, height) {
+    const existing = this._blurTextures.get(id);
+    if (existing && existing.width === width && existing.height === height) return existing;
+    if (existing) existing.texture.destroy();
+    const texture = this.device.createTexture({
+      size: [width, height],
+      format: this.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    const view = texture.createView();
+    const entry = { texture, view, width, height };
+    this._blurTextures.set(id, entry);
+    return entry;
+  }
+
+  _cleanupBlurTextures(activeIds) {
+    for (const [id, entry] of this._blurTextures) {
+      if (!activeIds.has(id)) {
+        entry.texture.destroy();
+        this._blurTextures.delete(id);
+      }
+    }
+  }
+
+  /** Render items below each blur element into a small offscreen texture. */
+  _renderBlurPasses(encoder, blurItems, sorted, zoomDpr, bgRgb, bgGrid, globalShadow, editingTextId) {
+    const device = this.device;
+    const A = this._align;
+    const scale = this._blurScale;
+
+    for (const blurItem of blurItems) {
+      // Compute blur texture size (1/20th of element's screen size)
+      const screenW = blurItem.w * zoomDpr;
+      const screenH = blurItem.h * zoomDpr;
+      const blurW = Math.max(2, Math.ceil(screenW * scale));
+      const blurH = Math.max(2, Math.ceil(screenH * scale));
+      const blurTex = this._getOrCreateBlurTexture(blurItem.id, blurW, blurH);
+
+      // Compute offscreen viewport uniforms:
+      // Map blur element's world area to fill the offscreen texture.
+      const offZoom = blurW / blurItem.w;
+      const offPanX = -blurItem.x * offZoom;
+      const offPanY = -blurItem.y * offZoom;
+
+      // Collect items below the blur element that intersect its bounds
+      const draws = [];
+      for (const item of sorted) {
+        if (item.z >= blurItem.z) break;
+        if (item.bgBlur) continue; // don't recurse blur
+        if (item.type === 'connector') continue; // skip connectors for blur bg
+        // Intersection test
+        if (item.x + item.w < blurItem.x || item.x > blurItem.x + blurItem.w) continue;
+        if (item.y + item.h < blurItem.y || item.y > blurItem.y + blurItem.h) continue;
+        this._collectItem(item, offPanX, offPanY, offZoom, blurW, blurH, globalShadow, editingTextId, draws);
+      }
+
+      // Write grid uniforms for offscreen (just fills with bg color, grid dots are invisible at 1/20th)
+      const gridData = new Float32Array(32);
+      gridData[0] = offPanX; gridData[1] = offPanY;
+      gridData[2] = offZoom;
+      gridData[4] = blurW; gridData[5] = blurH;
+      gridData.set([bgRgb[0], bgRgb[1], bgRgb[2], 1], 8);
+      // Grid dots disabled in offscreen (too small to matter)
+      device.queue.writeBuffer(this._blurGridUniformBuf, 0, gridData);
+
+      // Write quad uniforms for offscreen draws
+      if (draws.length > 0) {
+        const quadBuf = new ArrayBuffer(A * draws.length);
+        for (let i = 0; i < draws.length; i++) {
+          new Float32Array(quadBuf, A * i, 40).set(draws[i].uniforms);
+        }
+        device.queue.writeBuffer(this._blurQuadUniformBuf, 0, new Uint8Array(quadBuf));
+      }
+
+      // Render pass into blur texture
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: blurTex.view,
+          clearValue: { r: bgRgb[0], g: bgRgb[1], b: bgRgb[2], a: 1 },
+          loadOp: 'clear',
+          storeOp: 'store',
+        }],
+      });
+      pass.setViewport(0, 0, blurW, blurH, 0, 1);
+
+      // Draw background fill (fullscreen quad with grid shader for bg color)
+      pass.setPipeline(this.gridPipeline);
+      pass.setBindGroup(0, this._blurGridBindGroup);
+      pass.setVertexBuffer(0, this.gridVertBuf);
+      pass.draw(6);
+
+      // Draw content items
+      if (draws.length > 0) {
+        pass.setVertexBuffer(0, this.quadVertBuf);
+        let curPipe = null;
+        for (let i = 0; i < draws.length; i++) {
+          const draw = draws[i];
+          const pipeline = draw.isMatte ? this.mattePipeline : this.quadPipeline;
+          if (pipeline !== curPipe) { pass.setPipeline(pipeline); curPipe = pipeline; }
+          pass.setBindGroup(0, this._blurQuadBindGroup, [A * i]);
+          pass.setBindGroup(1, draw.texBindGroup);
+          pass.draw(6);
+        }
+      }
+
+      pass.end();
+    }
   }
 
   // ── Overlay collection (handles, pills, group box) ────────────────────────
