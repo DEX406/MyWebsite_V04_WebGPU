@@ -898,6 +898,7 @@ export class GPURenderer {
     const scale = this._blurScale;
 
     for (const blurItem of blurItems) {
+      if (blurItem.w <= 0 || blurItem.h <= 0) continue;
       // Compute blur texture size (1/20th of element's screen size)
       const screenW = blurItem.w * zoomDpr;
       const screenH = blurItem.h * zoomDpr;
