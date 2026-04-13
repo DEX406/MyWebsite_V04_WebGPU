@@ -91,11 +91,17 @@ export default function App() {
   // ── Media overlay (DOM elements behind canvas for videos/GIFs) ──
   const overlayRef = useRef(null);
   const overlayElsRef = useRef(new Map()); // id → DOM element
+  const blurElsRef = useRef(new Map()); // blurId → { container, children: Map<mediaId, el> }
 
   const syncOverlays = useCallback((overlays, panX, panY, zoom) => {
     const container = overlayRef.current;
     if (!container) return;
-    const activeIds = new Set(overlays.map(o => o.id));
+
+    const mediaOverlays = overlays.filter(o => o.type !== 'blur');
+    const blurOverlays = overlays.filter(o => o.type === 'blur');
+
+    // ── Regular media overlays (videos/GIFs) ──
+    const activeIds = new Set(mediaOverlays.map(o => o.id));
     const els = overlayElsRef.current;
 
     // Remove stale elements
@@ -108,7 +114,7 @@ export default function App() {
     }
 
     // Create or update elements
-    for (const o of overlays) {
+    for (const o of mediaOverlays) {
       let el = els.get(o.id);
       if (!el) {
         if (o.type === 'video') {
@@ -161,6 +167,109 @@ export default function App() {
       el.style.transform = `scale(${invSS})${rot}`;
       el.style.transformOrigin = 'center center';
     }
+
+    // ── Blur overlays: blurred video/GIF copies at 1/20th res ──
+    const activeBlurIds = new Set(blurOverlays.map(o => o.id));
+    const blurEls = blurElsRef.current;
+
+    // Remove stale blur containers
+    for (const [id, entry] of blurEls) {
+      if (!activeBlurIds.has(id)) {
+        for (const child of entry.children.values()) {
+          if (child.tagName === 'VIDEO') { child.pause(); child.src = ''; }
+        }
+        entry.container.remove();
+        blurEls.delete(id);
+      }
+    }
+
+    const BLUR_SCALE = 1 / 20;
+    const ss = SUPERSAMPLE;
+    const invSS = 1 / ss;
+
+    for (const o of blurOverlays) {
+      let entry = blurEls.get(o.id);
+      if (!entry) {
+        const div = document.createElement('div');
+        div.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;overflow:hidden;transform-origin:center center;';
+        container.appendChild(div);
+        entry = { container: div, children: new Map() };
+        blurEls.set(o.id, entry);
+      }
+
+      // Position the blur container (same SUPERSAMPLE math as regular overlays)
+      const bScreenX = o.x * zoom + panX;
+      const bScreenY = o.y * zoom + panY;
+      const bScreenW = o.w * zoom;
+      const bScreenH = o.h * zoom;
+      const bDiv = entry.container;
+      bDiv.style.left = (bScreenX - bScreenW * (ss - 1) * 0.5) + 'px';
+      bDiv.style.top = (bScreenY - bScreenH * (ss - 1) * 0.5) + 'px';
+      bDiv.style.width = (bScreenW * ss) + 'px';
+      bDiv.style.height = (bScreenH * ss) + 'px';
+      bDiv.style.zIndex = o.z;
+      bDiv.style.borderRadius = (o.radius * zoom * ss) + 'px';
+      const bRot = o.rotation ? ` rotate(${o.rotation}deg)` : '';
+      bDiv.style.transform = `scale(${invSS})${bRot}`;
+
+      // Remove stale child media
+      const activeMediaIds = new Set((o.mediaBehind || []).map(m => m.id));
+      for (const [mid, child] of entry.children) {
+        if (!activeMediaIds.has(mid)) {
+          if (child.tagName === 'VIDEO') { child.pause(); child.src = ''; }
+          child.remove();
+          entry.children.delete(mid);
+        }
+      }
+
+      // Create or update blurred media copies inside the container
+      for (const m of (o.mediaBehind || [])) {
+        let mel = entry.children.get(m.id);
+        if (!mel) {
+          if (m.type === 'video') {
+            mel = document.createElement('video');
+            mel.crossOrigin = 'anonymous';
+            mel.autoplay = true;
+            mel.loop = true;
+            mel.muted = true;
+            mel.playsInline = true;
+            mel.src = m.src;
+            mel.play().catch(() => {});
+          } else {
+            mel = document.createElement('img');
+            mel.crossOrigin = 'anonymous';
+            mel.src = m.src;
+          }
+          // No image-rendering:pixelated — we WANT bilinear for smooth blur
+          mel.style.cssText = 'position:absolute;pointer-events:none;object-fit:cover;transform-origin:0 0;';
+          bDiv.appendChild(mel);
+          entry.children.set(m.id, mel);
+        }
+
+        // Update src if changed
+        if (mel.src !== m.src && m.src) {
+          mel.src = m.src;
+          if (mel.tagName === 'VIDEO') mel.play().catch(() => {});
+        }
+
+        // Position media at 1/20th size inside the blur container, CSS scaled up.
+        // Container's local coord system is at ss× scale (before parent invSS transform).
+        // Media offset from blur element in world coords, converted to container-local:
+        const dx = (m.x - o.x) * zoom * ss;
+        const dy = (m.y - o.y) * zoom * ss;
+        const mw = m.w * zoom * ss;
+        const mh = m.h * zoom * ss;
+        // Render at 1/20th size, then scale(1/BLUR_SCALE) to fill — bilinear upscale = blur
+        const scaleFactor = 1 / BLUR_SCALE;
+        mel.style.left = dx + 'px';
+        mel.style.top = dy + 'px';
+        mel.style.width = (mw * BLUR_SCALE) + 'px';
+        mel.style.height = (mh * BLUR_SCALE) + 'px';
+        const mRot = m.rotation ? ` rotate(${m.rotation}deg)` : '';
+        mel.style.transform = `scale(${scaleFactor})${mRot}`;
+        mel.style.borderRadius = (m.radius * zoom * ss * BLUR_SCALE) + 'px';
+      }
+    }
   }, []);
 
   // Cleanup overlay elements on unmount
@@ -171,6 +280,13 @@ export default function App() {
         el.remove();
       }
       overlayElsRef.current.clear();
+      for (const entry of blurElsRef.current.values()) {
+        for (const child of entry.children.values()) {
+          if (child.tagName === 'VIDEO') { child.pause(); child.src = ''; }
+        }
+        entry.container.remove();
+      }
+      blurElsRef.current.clear();
     };
   }, []);
 
