@@ -38,6 +38,7 @@ export class GPURenderer {
 
     // Blur effect: offscreen textures for 1/20th-res background capture
     this._blurTextures = new Map(); // itemId → { texture, view, width, height }
+    this._blurMediaCache = new Map(); // mediaItemId → { canvas, ctx, gpuTexture, view, width, height }
     this._blurScale = 1 / 20;
 
     this._initPipelines();
@@ -206,7 +207,7 @@ export class GPURenderer {
 
   // ── Main render ────────────────────────────────────────────────────────────
 
-  render({ items, panX, panY, zoom, bgGrid, globalShadow, selectedIds, editingTextId }) {
+  render({ items, panX, panY, zoom, bgGrid, globalShadow, selectedIds, editingTextId, mediaElements }) {
     this._overlays = []; // media overlay data for DOM positioning
     const device = this.device;
     const dpr = (window.devicePixelRatio || 1) * SUPERSAMPLE;
@@ -232,15 +233,16 @@ export class GPURenderer {
 
     // ── Phase 0: Render blur offscreen textures ──
     const sorted = [...items].sort((a, b) => a.z - b.z);
-    this._currentSorted = sorted; // available to _findMediaBehind
     const blurItems = sorted.filter(i => i.bgBlur && i.type !== 'connector');
+    const blurMediaUsed = new Set();
 
     if (blurItems.length > 0) {
-      this._renderBlurPasses(blurItems, sorted, zoomDpr, bgRgb, bgGrid, globalShadow, editingTextId);
+      this._renderBlurPasses(blurItems, sorted, zoomDpr, bgRgb, bgGrid, globalShadow, editingTextId, mediaElements || new Map(), blurMediaUsed);
     }
-    // Cleanup blur textures for items no longer blurred
+    // Cleanup blur textures and media caches for items no longer active
     const activeBlurIds = new Set(blurItems.map(i => i.id));
     this._cleanupBlurTextures(activeBlurIds);
+    this._cleanupBlurMediaCache(blurMediaUsed);
 
     // ── Phase 1: Collect all draw commands ──
 
@@ -549,23 +551,6 @@ export class GPURenderer {
         const texBG = this._getTexBindGroup(blurTex.view, this.texCache.linearSampler);
         draws.push({ uniforms: bu, texBindGroup: texBG, isMatte: false });
 
-        // Blurred video/GIF copies behind the canvas, clipped to blur bounds.
-        // The blur texture has matte holes where videos are (from offscreen render),
-        // so the blurred DOM copies show through at higher z-index than originals.
-        const mediaBehind = this._findMediaBehind(item);
-        if (mediaBehind.length > 0) {
-          this._overlays.push({
-            id: item.id,
-            type: 'blur-video',
-            x: item.x, y: item.y,
-            w: item.w, h: item.h,
-            rotation: item.rotation || 0,
-            radius: item.radius ?? 2,
-            z: item.z,
-            mediaBehind,
-          });
-        }
-
         // Pass 3: text glyph overlay (text/link items still need their text drawn on top)
         if ((item.type === 'text' || item.type === 'link') && editingTextId !== item.id) {
           const entry = this.textRenderer.get(item);
@@ -817,31 +802,13 @@ export class GPURenderer {
     return item.shadow ?? (item.type !== 'shape' && item.type !== 'text');
   }
 
-  /** Find video/GIF items below a blur element that intersect its bounds. */
-  _findMediaBehind(blurItem) {
-    if (!this._currentSorted) return [];
-    const result = [];
-    for (const item of this._currentSorted) {
-      if (item.z >= blurItem.z) break;
-      if (item.type === 'connector') continue;
-      const isGif = item.type === 'image' && (item.isGif || isGifSrc(item.src));
-      const isMedia = item.type === 'video' || isGif;
-      if (!isMedia) continue;
-      // Intersection test
-      if (item.x + item.w < blurItem.x || item.x > blurItem.x + blurItem.w) continue;
-      if (item.y + item.h < blurItem.y || item.y > blurItem.y + blurItem.h) continue;
-      result.push({
-        id: item.id,
-        type: item.type === 'video' ? 'video' : 'gif',
-        src: item.src,
-        x: item.x, y: item.y,
-        w: item.w, h: item.h,
-        rotation: item.rotation || 0,
-        radius: item.radius ?? 2,
-        z: item.z,
-      });
+  _cleanupBlurMediaCache(activeIds) {
+    for (const [id, entry] of this._blurMediaCache) {
+      if (!activeIds.has(id)) {
+        entry.gpuTexture.destroy();
+        this._blurMediaCache.delete(id);
+      }
     }
-    return result;
   }
 
   _getBgColor(item) {
@@ -878,9 +845,11 @@ export class GPURenderer {
   }
 
   /** Render items below each blur element into a small offscreen texture.
+   *  Video/GIF frames are captured from their DOM elements via copyExternalImageToTexture
+   *  and composited directly in the blur texture — no DOM copies needed.
    *  Each blur element gets its own command buffer submission to avoid
    *  uniform buffer conflicts between sequential render passes. */
-  _renderBlurPasses(blurItems, sorted, zoomDpr, bgRgb, bgGrid, globalShadow, editingTextId) {
+  _renderBlurPasses(blurItems, sorted, zoomDpr, bgRgb, bgGrid, globalShadow, editingTextId, mediaElements, blurMediaUsed) {
     const device = this.device;
     const A = this._align;
     const scale = this._blurScale;
@@ -895,14 +864,11 @@ export class GPURenderer {
 
       // Compute offscreen viewport uniforms:
       // Map blur element's world area to fill the offscreen texture.
-      // Note: the capture is axis-aligned; for rotated elements the blur
-      // texture captures the unrotated rect. At 1/20th res this is imperceptible.
       const offZoom = blurW / blurItem.w;
       const offPanX = -blurItem.x * offZoom;
       const offPanY = -blurItem.y * offZoom;
 
-      // For rotated blur elements, expand the intersection margin to avoid
-      // incorrectly culling items visible through the rotated shape.
+      // For rotated blur elements, expand the intersection margin.
       const rot = blurItem.rotation || 0;
       const margin = rot !== 0
         ? Math.max(blurItem.w, blurItem.h) * Math.abs(Math.sin((rot * Math.PI / 180) * 2)) * 0.5
@@ -911,10 +877,8 @@ export class GPURenderer {
       const bx1 = blurItem.x + blurItem.w + margin, by1 = blurItem.y + blurItem.h + margin;
 
       // Collect items below the blur element that intersect its bounds.
-      // Media (video/GIF) items get matte cutouts instead of content draws —
-      // the matte creates transparent holes in the blur texture so the blurred
-      // DOM video copy can show through. At 1/20th res the matte edges are
-      // naturally soft/blurred, giving proper frosted-glass layering.
+      // Media (video/GIF) frames are captured from DOM and rendered as textured quads,
+      // so the blur texture is fully opaque with all content properly layered.
       const draws = [];
       for (const item of sorted) {
         if (item.z >= blurItem.z) break;
@@ -928,7 +892,49 @@ export class GPURenderer {
         const isMedia = item.type === 'video' || isGif;
 
         if (isMedia) {
-          // Matte cutout for media — transparent hole in blur texture
+          // Capture current video/GIF frame from DOM and render as textured quad.
+          // This composites the media directly into the blur texture at 1/20th res.
+          const domEl = mediaElements.get(item.id);
+          if (!domEl) continue;
+
+          const mw = Math.max(2, Math.ceil(item.w * scale));
+          const mh = Math.max(2, Math.ceil(item.h * scale));
+
+          // Get or create cached tiny canvas + GPU texture for this media
+          let mEntry = this._blurMediaCache.get(item.id);
+          if (!mEntry || mEntry.width !== mw || mEntry.height !== mh) {
+            if (mEntry) mEntry.gpuTexture.destroy();
+            const c = mEntry?.canvas || document.createElement('canvas');
+            c.width = mw; c.height = mh;
+            const gpuTexture = device.createTexture({
+              size: [mw, mh], format: 'rgba8unorm',
+              usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+            });
+            mEntry = { canvas: c, ctx: c.getContext('2d'), gpuTexture, view: gpuTexture.createView(), width: mw, height: mh };
+            this._blurMediaCache.set(item.id, mEntry);
+          }
+
+          // Capture current frame with cover-fit cropping (match object-fit:cover)
+          try {
+            const srcW = domEl.naturalWidth || domEl.videoWidth || item.w;
+            const srcH = domEl.naturalHeight || domEl.videoHeight || item.h;
+            const itemAsp = item.w / item.h;
+            const srcAsp = srcW / srcH;
+            let sx, sy, sw, sh;
+            if (srcAsp > itemAsp) {
+              sh = srcH; sw = srcH * itemAsp; sx = (srcW - sw) / 2; sy = 0;
+            } else {
+              sw = srcW; sh = srcW / itemAsp; sx = 0; sy = (srcH - sh) / 2;
+            }
+            mEntry.ctx.drawImage(domEl, sx, sy, sw, sh, 0, 0, mw, mh);
+            device.queue.copyExternalImageToTexture(
+              { source: mEntry.canvas }, { texture: mEntry.gpuTexture }, [mw, mh]
+            );
+          } catch(e) { continue; } // media not ready or CORS
+
+          blurMediaUsed.add(item.id);
+
+          // Render as textured quad at the media item's position
           const mu = new Float32Array(40);
           mu[0] = blurW; mu[1] = blurH;
           mu[2] = offPanX; mu[3] = offPanY;
@@ -938,9 +944,14 @@ export class GPURenderer {
           mu[7] = 1.0;
           mu[8] = item.x; mu[9] = item.y;
           mu[10] = item.w; mu[11] = item.h;
-          mu[12] = item.w + 2; mu[13] = item.h + 2;
-          mu[14] = 1; mu[15] = 1;
-          draws.push({ uniforms: mu, texBindGroup: this._fallbackTexBG, isMatte: true });
+          mu[12] = item.w; mu[13] = item.h;
+          mu[14] = 0; mu[15] = 0;
+          mu.set([1, 1, 1, 1], 16); // white tint — show texture as-is
+          mu[20] = 0; mu[21] = 0; mu[22] = 1; mu[23] = 1;
+          mu[33] = 1; // textured
+          mu[34] = 0; // no shadow
+          const texBG = this._getTexBindGroup(mEntry.view, this.texCache.linearSampler);
+          draws.push({ uniforms: mu, texBindGroup: texBG, isMatte: false });
           continue;
         }
 
