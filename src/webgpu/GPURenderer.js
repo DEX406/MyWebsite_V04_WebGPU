@@ -588,7 +588,7 @@ export class GPURenderer {
           tu[33] = 0; tu[34] = 0; tu[38] = 1; // textAlpha
           tu.set(textRgba, 28);
           const texBG = this._getTexBindGroup(entry.view, this.textRenderer.sampler);
-          draws.push({ uniforms: tu, texBindGroup: texBG });
+          draws.push({ uniforms: tu, texBindGroup: texBG, isMatte: false });
         }
         return;
       }
@@ -908,9 +908,20 @@ export class GPURenderer {
 
       // Compute offscreen viewport uniforms:
       // Map blur element's world area to fill the offscreen texture.
+      // Note: the capture is axis-aligned; for rotated elements the blur
+      // texture captures the unrotated rect. At 1/20th res this is imperceptible.
       const offZoom = blurW / blurItem.w;
       const offPanX = -blurItem.x * offZoom;
       const offPanY = -blurItem.y * offZoom;
+
+      // For rotated blur elements, expand the intersection margin to avoid
+      // incorrectly culling items visible through the rotated shape.
+      const rot = blurItem.rotation || 0;
+      const margin = rot !== 0
+        ? Math.max(blurItem.w, blurItem.h) * Math.abs(Math.sin((rot * Math.PI / 180) * 2)) * 0.5
+        : 0;
+      const bx0 = blurItem.x - margin, by0 = blurItem.y - margin;
+      const bx1 = blurItem.x + blurItem.w + margin, by1 = blurItem.y + blurItem.h + margin;
 
       // Collect items below the blur element that intersect its bounds.
       // Skip media (video/GIF) — they're DOM-rendered and handled by blur DOM overlays.
@@ -922,9 +933,9 @@ export class GPURenderer {
         if (item.type === 'connector') continue;
         if (item.type === 'video') continue;
         if (item.type === 'image' && (item.isGif || isGifSrc(item.src))) continue;
-        // Intersection test
-        if (item.x + item.w < blurItem.x || item.x > blurItem.x + blurItem.w) continue;
-        if (item.y + item.h < blurItem.y || item.y > blurItem.y + blurItem.h) continue;
+        // Intersection test (with rotation margin)
+        if (item.x + item.w < bx0 || item.x > bx1) continue;
+        if (item.y + item.h < by0 || item.y > by1) continue;
         this._collectItem(item, offPanX, offPanY, offZoom, blurW, blurH, globalShadow, editingTextId, draws);
       }
 
