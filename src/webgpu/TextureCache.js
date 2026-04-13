@@ -92,20 +92,24 @@ export class TextureCache {
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
-        this.loading.delete(url);
-        const tex = this._createFromSource(img, img.naturalWidth, img.naturalHeight);
-        const entry = {
-          tex,
-          view: tex.createView(),
-          width: img.naturalWidth,
-          height: img.naturalHeight,
-          ready: true,
-          isPlaceholder,
-          insertOrder: this.insertCounter++,
-        };
-        this.cache.set(url, entry);
-        this._evict();
-        if (this._onTextureReady) this._onTextureReady();
+        const w = img.naturalWidth, h = img.naturalHeight;
+        createImageBitmap(img).then(bitmap => {
+          this.loading.delete(url);
+          const tex = this._createFromSource(bitmap, w, h);
+          bitmap.close();
+          const entry = {
+            tex,
+            view: tex.createView(),
+            width: w,
+            height: h,
+            ready: true,
+            isPlaceholder,
+            insertOrder: this.insertCounter++,
+          };
+          this.cache.set(url, entry);
+          this._evict();
+          if (this._onTextureReady) this._onTextureReady();
+        });
       };
       img.onerror = () => { this.loading.delete(url); };
       img.src = url;
