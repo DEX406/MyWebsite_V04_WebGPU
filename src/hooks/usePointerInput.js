@@ -78,7 +78,9 @@ export function usePointerInput({
         e.stopPropagation();
         if (!selectedIds.includes(id)) setSelectedIds([id]);
         pushUndo(items);
-        setEditingConnector({ id, handle: action.replace("move-", ""), startX: e.clientX, startY: e.clientY, startItem: { ...item } });
+        const ecInfo = { id, handle: action.replace("move-", ""), startX: e.clientX, startY: e.clientY, startItem: { ...item } };
+        setEditingConnector(ecInfo);
+        editingConnectorRef.current = ecInfo;
       }
 
       if (!action && item.type === "text") {
@@ -106,7 +108,8 @@ export function usePointerInput({
           itemsStartMap: new Map(items.filter(i => dragIds.includes(i.id)).map(i => [i.id, {
             id: i.id, x: i.x, y: i.y,
             x1: i.x1, y1: i.y1, x2: i.x2, y2: i.y2,
-            elbowX: i.elbowX, elbowY: i.elbowY
+            elbowX: i.elbowX ?? (i.x1 + i.x2) / 2,
+            elbowY: i.elbowY ?? (i.y1 + i.y2) / 2
           }])),
         };
         setDragging(dragInfo);
@@ -171,10 +174,9 @@ export function usePointerInput({
       } else if (ec.handle === "ep2") {
         props = { x2: snap(si.x2 + dx, es), y2: snap(si.y2 + dy, es) };
       } else if (ec.handle === "elbow") {
-        const item = items.find(i => i.id === ec.id);
-        const newElbowX = snap(si.elbowX + dx, es);
-        const newElbowY = snap(si.elbowY + dy, es);
-        props = { elbowX: newElbowX, elbowY: newElbowY, orientation: computeElbowOrientation(item, newElbowX, newElbowY) };
+        const newElbowX = snap((si.elbowX ?? (si.x1 + si.x2) / 2) + dx, es);
+        const newElbowY = snap((si.elbowY ?? (si.y1 + si.y2) / 2) + dy, es);
+        props = { elbowX: newElbowX, elbowY: newElbowY, orientation: computeElbowOrientation(si, newElbowX, newElbowY) };
       }
       if (props) {
         itemOverrideRef.current = { id: ec.id, props };

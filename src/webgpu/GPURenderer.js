@@ -233,31 +233,33 @@ export class GPURenderer {
     const resW = cssW * dpr;
     const resH = cssH * dpr;
 
+    const contentDrawOrder = [];
+
     for (const item of sorted) {
       if (item.type === 'connector') {
         const cL = Math.min(item.x1, item.x2), cT = Math.min(item.y1, item.y2);
         const cR = Math.max(item.x1, item.x2), cB = Math.max(item.y1, item.y2);
         if (cR < vpLeft || cL > vpRight || cB < vpTop || cT > vpBottom) continue;
+        const ls = lineDraws.length, cs = circleDraws.length;
         this._collectConnector(item, panDpr, panDprY, zoomDpr, resW, resH, lineDraws, circleDraws);
+        contentDrawOrder.push({ lineStart: ls, lineEnd: lineDraws.length, circleStart: cs, circleEnd: circleDraws.length });
       } else {
         if (item.x + item.w < vpLeft || item.x > vpRight || item.y + item.h < vpTop || item.y > vpBottom) continue;
+        const qs = quadDraws.length;
         this._collectItem(item, panDpr, panDprY, zoomDpr, resW, resH, globalShadow, editingTextId, quadDraws);
+        // Selection outline immediately after the item (same z-layer)
+        if (selSet.has(item.id)) {
+          this._collectSelection(item, panDpr, panDprY, zoomDpr, resW, resH, quadDraws);
+        }
+        contentDrawOrder.push({ quadStart: qs, quadEnd: quadDraws.length });
       }
     }
 
-    // Selection outlines
-    for (const item of sorted) {
-      if (!selSet.has(item.id) || item.type === 'connector') continue;
-      if (item.x + item.w < vpLeft || item.x > vpRight || item.y + item.h < vpTop || item.y > vpBottom) continue;
-      this._collectSelection(item, panDpr, panDprY, zoomDpr, resW, resH, quadDraws);
-    }
-
     // ── Phase 1b: Collect overlay draws (handles, pills, group box) ──
-    // Separate arrays for correct layering: content → overlay quads → overlay lines → overlay circles → delete X lines
+    // Separate arrays for correct layering: content → overlay quads → overlay lines → overlay circles
     const oQuads = [];    // group box, info pills
     const oLines = [];    // rotation rods
-    const oCircles = [];  // handle dots, knobs, delete circles
-    const oXLines = [];   // delete X marks (must render on top of circles)
+    const oCircles = [];  // handle dots, knobs
 
     for (const item of sorted) {
       if (!selSet.has(item.id)) continue;
@@ -265,10 +267,10 @@ export class GPURenderer {
         const cL = Math.min(item.x1, item.x2), cT = Math.min(item.y1, item.y2);
         const cR = Math.max(item.x1, item.x2), cB = Math.max(item.y1, item.y2);
         if (cR < vpLeft || cL > vpRight || cB < vpTop || cT > vpBottom) continue;
-        this._collectConnectorHandles(item, panDpr, panDprY, zoomDpr, resW, resH, oCircles, oXLines);
+        this._collectConnectorHandles(item, panDpr, panDprY, zoomDpr, resW, resH, oCircles);
       } else {
         if (item.x + item.w < vpLeft || item.x > vpRight || item.y + item.h < vpTop || item.y > vpBottom) continue;
-        this._collectItemHandles(item, panDpr, panDprY, zoomDpr, resW, resH, oLines, oCircles, oXLines);
+        this._collectItemHandles(item, panDpr, panDprY, zoomDpr, resW, resH, oLines, oCircles);
         if (item.type === 'image' || item.type === 'video') {
           this._collectInfoPill(item, panDpr, panDprY, zoomDpr, resW, resH, oQuads);
         }
@@ -282,7 +284,7 @@ export class GPURenderer {
     const cCircleCount = circleDraws.length;
 
     const allQuads = oQuads.length > 0 ? [...quadDraws, ...oQuads] : quadDraws;
-    const allLines = (oLines.length + oXLines.length) > 0 ? [...lineDraws, ...oLines, ...oXLines] : lineDraws;
+    const allLines = oLines.length > 0 ? [...lineDraws, ...oLines] : lineDraws;
     const allCircles = oCircles.length > 0 ? [...circleDraws, ...oCircles] : circleDraws;
 
     // ── Phase 2: Upload uniform data ──
@@ -391,42 +393,38 @@ export class GPURenderer {
       }
     }
 
-    // ── Content layer ──
-
-    // Quad + matte draws (interleaved for correct z-ordering)
-    if (cQuadCount > 0) {
-      let currentPipeline = null;
-      pass.setVertexBuffer(0, this.quadVertBuf);
-      for (let i = 0; i < cQuadCount; i++) {
-        const draw = allQuads[i];
-        const pipeline = draw.isMatte ? this.mattePipeline : this.quadPipeline;
-        if (pipeline !== currentPipeline) {
-          pass.setPipeline(pipeline);
-          currentPipeline = pipeline;
+    // ── Content layer (interleaved by z-order for correct layering) ──
+    {
+      let curPipe = null;
+      for (const entry of contentDrawOrder) {
+        if (entry.quadStart !== undefined) {
+          pass.setVertexBuffer(0, this.quadVertBuf);
+          for (let i = entry.quadStart; i < entry.quadEnd; i++) {
+            const draw = allQuads[i];
+            const pipeline = draw.isMatte ? this.mattePipeline : this.quadPipeline;
+            if (pipeline !== curPipe) { pass.setPipeline(pipeline); curPipe = pipeline; }
+            pass.setBindGroup(0, this.quadBindGroup, [A * i]);
+            pass.setBindGroup(1, draw.texBindGroup);
+            pass.draw(6);
+          }
+        } else {
+          if (entry.lineStart < entry.lineEnd) {
+            if (curPipe !== this.linePipeline) { pass.setPipeline(this.linePipeline); curPipe = this.linePipeline; }
+            pass.setVertexBuffer(0, this.lineVertBuf);
+            for (let i = entry.lineStart; i < entry.lineEnd; i++) {
+              pass.setBindGroup(0, this.lineBindGroup, [A * i]);
+              pass.draw(allLines[i]._vertCount, 1, allLines[i]._vertOffset, 0);
+            }
+          }
+          if (entry.circleStart < entry.circleEnd) {
+            if (curPipe !== this.circlePipeline) { pass.setPipeline(this.circlePipeline); curPipe = this.circlePipeline; }
+            pass.setVertexBuffer(0, this.quadVertBuf);
+            for (let i = entry.circleStart; i < entry.circleEnd; i++) {
+              pass.setBindGroup(0, this.circleBindGroup, [A * i]);
+              pass.draw(6);
+            }
+          }
         }
-        pass.setBindGroup(0, this.quadBindGroup, [A * i]);
-        pass.setBindGroup(1, draw.texBindGroup);
-        pass.draw(6);
-      }
-    }
-
-    // Line draws (connectors)
-    if (cLineCount > 0) {
-      pass.setPipeline(this.linePipeline);
-      pass.setVertexBuffer(0, this.lineVertBuf);
-      for (let i = 0; i < cLineCount; i++) {
-        pass.setBindGroup(0, this.lineBindGroup, [A * i]);
-        pass.draw(allLines[i]._vertCount, 1, allLines[i]._vertOffset, 0);
-      }
-    }
-
-    // Circle draws (connector dots)
-    if (cCircleCount > 0) {
-      pass.setPipeline(this.circlePipeline);
-      pass.setVertexBuffer(0, this.quadVertBuf);
-      for (let i = 0; i < cCircleCount; i++) {
-        pass.setBindGroup(0, this.circleBindGroup, [A * i]);
-        pass.draw(6);
       }
     }
 
@@ -461,17 +459,6 @@ export class GPURenderer {
       for (let i = cCircleCount; i < allCircles.length; i++) {
         pass.setBindGroup(0, this.circleBindGroup, [A * i]);
         pass.draw(6);
-      }
-    }
-
-    // Delete X lines (rendered last, on top of delete circles)
-    if (oXLines.length > 0) {
-      pass.setPipeline(this.linePipeline);
-      pass.setVertexBuffer(0, this.lineVertBuf);
-      const xStart = cLineCount + oLines.length;
-      for (let i = xStart; i < allLines.length; i++) {
-        pass.setBindGroup(0, this.lineBindGroup, [A * i]);
-        pass.draw(allLines[i]._vertCount, 1, allLines[i]._vertOffset, 0);
       }
     }
 
@@ -762,7 +749,7 @@ export class GPURenderer {
 
   // ── Overlay collection (handles, pills, group box) ────────────────────────
 
-  _collectItemHandles(item, panDpr, panDprY, zoomDpr, resW, resH, oLines, oCircles, oXLines) {
+  _collectItemHandles(item, panDpr, panDprY, zoomDpr, resW, resH, oLines, oCircles) {
     const rot = (item.rotation || 0) * Math.PI / 180;
     const cx = item.x + item.w / 2;
     const cy = item.y + item.h / 2;
@@ -776,8 +763,6 @@ export class GPURenderer {
     const BLUE = [0.173, 0.518, 0.859, 0.85];
     const BLUE_ROD = [0.173, 0.518, 0.859, 0.7];
     const FILL = [0.761, 0.753, 0.714, 1.0];
-    const RED = [0.996, 0.506, 0.506, 0.88];
-    const X_COL = [0.761, 0.753, 0.714, 1.0];
 
     const addCircle = (wcx, wcy, radius, color) => {
       const u = new Float32Array(12);
@@ -822,31 +807,9 @@ export class GPURenderer {
       addBordered(wx, wy, 4.5, 1.5, FILL, BLUE);
     }
 
-    // Delete circle
-    const [delX, delY] = rp(item.x + item.w + 17, item.y - 17);
-    addCircle(delX, delY, 11, RED);
-
-    // Delete X mark
-    const xH = 3.5;
-    const xPts = [
-      [item.x + item.w + 17 - xH, item.y - 17 - xH],
-      [item.x + item.w + 17 + xH, item.y - 17 + xH],
-      [item.x + item.w + 17 + xH, item.y - 17 - xH],
-      [item.x + item.w + 17 - xH, item.y - 17 + xH],
-    ].map(([px, py]) => rp(px, py));
-    const xVerts = [
-      ...this._thickLineVerts([xPts[0], xPts[1]], 0.6),
-      ...this._thickLineVerts([xPts[2], xPts[3]], 0.6),
-    ];
-    if (xVerts.length > 0) {
-      const u = new Float32Array(12);
-      u[0] = resW; u[1] = resH; u[2] = panDpr; u[3] = panDprY; u[4] = zoomDpr;
-      u.set(X_COL, 8);
-      oXLines.push({ uniforms: u, verts: new Float32Array(xVerts) });
-    }
   }
 
-  _collectConnectorHandles(item, panDpr, panDprY, zoomDpr, resW, resH, oCircles, oXLines) {
+  _collectConnectorHandles(item, panDpr, panDprY, zoomDpr, resW, resH, oCircles) {
     const { x1, y1, x2, y2 } = item;
     const elbowX = item.elbowX ?? (x1 + x2) / 2;
     const elbowY = item.elbowY ?? (y1 + y2) / 2;
@@ -858,8 +821,6 @@ export class GPURenderer {
 
     const BLUE = [0.173, 0.518, 0.859, 0.85];
     const FILL = [0.761, 0.753, 0.714, 1.0];
-    const RED = [0.996, 0.506, 0.506, 0.88];
-    const X_COL = [0.761, 0.753, 0.714, 1.0];
 
     const addCircle = (wcx, wcy, radius, color) => {
       const u = new Float32Array(12);
@@ -872,24 +833,6 @@ export class GPURenderer {
     // Elbow handle (bordered)
     addCircle(handleX, handleY, 6.5, BLUE);
     addCircle(handleX, handleY, 5, FILL);
-
-    // Delete circle
-    const delX = handleX + 18;
-    const delY = handleY - 18;
-    addCircle(delX, delY, 11, RED);
-
-    // Delete X mark
-    const xH = 3.5;
-    const xVerts = [
-      ...this._thickLineVerts([[delX - xH, delY - xH], [delX + xH, delY + xH]], 0.6),
-      ...this._thickLineVerts([[delX + xH, delY - xH], [delX - xH, delY + xH]], 0.6),
-    ];
-    if (xVerts.length > 0) {
-      const u = new Float32Array(12);
-      u[0] = resW; u[1] = resH; u[2] = panDpr; u[3] = panDprY; u[4] = zoomDpr;
-      u.set(X_COL, 8);
-      oXLines.push({ uniforms: u, verts: new Float32Array(xVerts) });
-    }
   }
 
   _collectGroupBox(items, selectedIds, panDpr, panDprY, zoomDpr, resW, resH, oQuads) {
