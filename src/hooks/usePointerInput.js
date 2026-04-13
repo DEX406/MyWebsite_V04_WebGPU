@@ -174,10 +174,9 @@ export function usePointerInput({
       } else if (ec.handle === "ep2") {
         props = { x2: snap(si.x2 + dx, es), y2: snap(si.y2 + dy, es) };
       } else if (ec.handle === "elbow") {
-        const item = items.find(i => i.id === ec.id);
         const newElbowX = snap((si.elbowX ?? (si.x1 + si.x2) / 2) + dx, es);
         const newElbowY = snap((si.elbowY ?? (si.y1 + si.y2) / 2) + dy, es);
-        props = { elbowX: newElbowX, elbowY: newElbowY, orientation: computeElbowOrientation(item, newElbowX, newElbowY) };
+        props = { elbowX: newElbowX, elbowY: newElbowY, orientation: computeElbowOrientation(si, newElbowX, newElbowY) };
       }
       if (props) {
         itemOverrideRef.current = { id: ec.id, props };

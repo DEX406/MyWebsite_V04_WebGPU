@@ -233,23 +233,26 @@ export class GPURenderer {
     const resW = cssW * dpr;
     const resH = cssH * dpr;
 
+    const contentDrawOrder = [];
+
     for (const item of sorted) {
       if (item.type === 'connector') {
         const cL = Math.min(item.x1, item.x2), cT = Math.min(item.y1, item.y2);
         const cR = Math.max(item.x1, item.x2), cB = Math.max(item.y1, item.y2);
         if (cR < vpLeft || cL > vpRight || cB < vpTop || cT > vpBottom) continue;
+        const ls = lineDraws.length, cs = circleDraws.length;
         this._collectConnector(item, panDpr, panDprY, zoomDpr, resW, resH, lineDraws, circleDraws);
+        contentDrawOrder.push({ lineStart: ls, lineEnd: lineDraws.length, circleStart: cs, circleEnd: circleDraws.length });
       } else {
         if (item.x + item.w < vpLeft || item.x > vpRight || item.y + item.h < vpTop || item.y > vpBottom) continue;
+        const qs = quadDraws.length;
         this._collectItem(item, panDpr, panDprY, zoomDpr, resW, resH, globalShadow, editingTextId, quadDraws);
+        // Selection outline immediately after the item (same z-layer)
+        if (selSet.has(item.id)) {
+          this._collectSelection(item, panDpr, panDprY, zoomDpr, resW, resH, quadDraws);
+        }
+        contentDrawOrder.push({ quadStart: qs, quadEnd: quadDraws.length });
       }
-    }
-
-    // Selection outlines
-    for (const item of sorted) {
-      if (!selSet.has(item.id) || item.type === 'connector') continue;
-      if (item.x + item.w < vpLeft || item.x > vpRight || item.y + item.h < vpTop || item.y > vpBottom) continue;
-      this._collectSelection(item, panDpr, panDprY, zoomDpr, resW, resH, quadDraws);
     }
 
     // ── Phase 1b: Collect overlay draws (handles, pills, group box) ──
@@ -390,42 +393,38 @@ export class GPURenderer {
       }
     }
 
-    // ── Content layer ──
-
-    // Quad + matte draws (interleaved for correct z-ordering)
-    if (cQuadCount > 0) {
-      let currentPipeline = null;
-      pass.setVertexBuffer(0, this.quadVertBuf);
-      for (let i = 0; i < cQuadCount; i++) {
-        const draw = allQuads[i];
-        const pipeline = draw.isMatte ? this.mattePipeline : this.quadPipeline;
-        if (pipeline !== currentPipeline) {
-          pass.setPipeline(pipeline);
-          currentPipeline = pipeline;
+    // ── Content layer (interleaved by z-order for correct layering) ──
+    {
+      let curPipe = null;
+      for (const entry of contentDrawOrder) {
+        if (entry.quadStart !== undefined) {
+          pass.setVertexBuffer(0, this.quadVertBuf);
+          for (let i = entry.quadStart; i < entry.quadEnd; i++) {
+            const draw = allQuads[i];
+            const pipeline = draw.isMatte ? this.mattePipeline : this.quadPipeline;
+            if (pipeline !== curPipe) { pass.setPipeline(pipeline); curPipe = pipeline; }
+            pass.setBindGroup(0, this.quadBindGroup, [A * i]);
+            pass.setBindGroup(1, draw.texBindGroup);
+            pass.draw(6);
+          }
+        } else {
+          if (entry.lineStart < entry.lineEnd) {
+            if (curPipe !== this.linePipeline) { pass.setPipeline(this.linePipeline); curPipe = this.linePipeline; }
+            pass.setVertexBuffer(0, this.lineVertBuf);
+            for (let i = entry.lineStart; i < entry.lineEnd; i++) {
+              pass.setBindGroup(0, this.lineBindGroup, [A * i]);
+              pass.draw(allLines[i]._vertCount, 1, allLines[i]._vertOffset, 0);
+            }
+          }
+          if (entry.circleStart < entry.circleEnd) {
+            if (curPipe !== this.circlePipeline) { pass.setPipeline(this.circlePipeline); curPipe = this.circlePipeline; }
+            pass.setVertexBuffer(0, this.quadVertBuf);
+            for (let i = entry.circleStart; i < entry.circleEnd; i++) {
+              pass.setBindGroup(0, this.circleBindGroup, [A * i]);
+              pass.draw(6);
+            }
+          }
         }
-        pass.setBindGroup(0, this.quadBindGroup, [A * i]);
-        pass.setBindGroup(1, draw.texBindGroup);
-        pass.draw(6);
-      }
-    }
-
-    // Line draws (connectors)
-    if (cLineCount > 0) {
-      pass.setPipeline(this.linePipeline);
-      pass.setVertexBuffer(0, this.lineVertBuf);
-      for (let i = 0; i < cLineCount; i++) {
-        pass.setBindGroup(0, this.lineBindGroup, [A * i]);
-        pass.draw(allLines[i]._vertCount, 1, allLines[i]._vertOffset, 0);
-      }
-    }
-
-    // Circle draws (connector dots)
-    if (cCircleCount > 0) {
-      pass.setPipeline(this.circlePipeline);
-      pass.setVertexBuffer(0, this.quadVertBuf);
-      for (let i = 0; i < cCircleCount; i++) {
-        pass.setBindGroup(0, this.circleBindGroup, [A * i]);
-        pass.draw(6);
       }
     }
 
