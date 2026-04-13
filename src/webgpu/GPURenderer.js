@@ -549,9 +549,9 @@ export class GPURenderer {
         const texBG = this._getTexBindGroup(blurTex.view, this.texCache.linearSampler);
         draws.push({ uniforms: bu, texBindGroup: texBG, isMatte: false });
 
-        // Blurred video/GIF copies: placed ABOVE the canvas (no matte needed).
-        // The blur texture stays on GPU for static content; blurred video DOM
-        // elements overlay on top, clipped to the blur element's shape.
+        // Blurred video/GIF copies behind the canvas, clipped to blur bounds.
+        // The blur texture has matte holes where videos are (from offscreen render),
+        // so the blurred DOM copies show through at higher z-index than originals.
         const mediaBehind = this._findMediaBehind(item);
         if (mediaBehind.length > 0) {
           this._overlays.push({
@@ -912,18 +912,39 @@ export class GPURenderer {
       const bx1 = blurItem.x + blurItem.w + margin, by1 = blurItem.y + blurItem.h + margin;
 
       // Collect items below the blur element that intersect its bounds.
-      // Skip media (video/GIF) — they're DOM-rendered and handled by blur DOM overlays.
-      // Skip other blur items to avoid recursion.
+      // Media (video/GIF) items get matte cutouts instead of content draws —
+      // the matte creates transparent holes in the blur texture so the blurred
+      // DOM video copy can show through. At 1/20th res the matte edges are
+      // naturally soft/blurred, giving proper frosted-glass layering.
       const draws = [];
       for (const item of sorted) {
         if (item.z >= blurItem.z) break;
         if (item.bgBlur) continue;
         if (item.type === 'connector') continue;
-        if (item.type === 'video') continue;
-        if (item.type === 'image' && (item.isGif || isGifSrc(item.src))) continue;
         // Intersection test (with rotation margin)
         if (item.x + item.w < bx0 || item.x > bx1) continue;
         if (item.y + item.h < by0 || item.y > by1) continue;
+
+        const isGif = item.type === 'image' && (item.isGif || isGifSrc(item.src));
+        const isMedia = item.type === 'video' || isGif;
+
+        if (isMedia) {
+          // Matte cutout for media — transparent hole in blur texture
+          const mu = new Float32Array(40);
+          mu[0] = blurW; mu[1] = blurH;
+          mu[2] = offPanX; mu[3] = offPanY;
+          mu[4] = offZoom;
+          mu[5] = (item.rotation || 0) * Math.PI / 180;
+          mu[6] = item.radius ?? 2;
+          mu[7] = 1.0;
+          mu[8] = item.x; mu[9] = item.y;
+          mu[10] = item.w; mu[11] = item.h;
+          mu[12] = item.w + 2; mu[13] = item.h + 2;
+          mu[14] = 1; mu[15] = 1;
+          draws.push({ uniforms: mu, texBindGroup: this._fallbackTexBG, isMatte: true });
+          continue;
+        }
+
         this._collectItem(item, offPanX, offPanY, offZoom, blurW, blurH, globalShadow, editingTextId, draws);
       }
 
