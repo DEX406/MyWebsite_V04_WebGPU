@@ -3,6 +3,7 @@
 // Videos and GIFs are rendered via DOM overlay (not GPU textures) for iOS compatibility.
 
 const MAX_TEXTURES = 200;
+const UPLOADS_PER_FRAME = 2;
 
 export class TextureCache {
   constructor(device, onTextureReady) {
@@ -11,6 +12,8 @@ export class TextureCache {
     this.loading = new Set();
     this.insertCounter = 0;
     this._onTextureReady = onTextureReady || null;
+    this._uploadQueue = []; // { bitmap, url, w, h, isPlaceholder }
+    this._uploadRaf = 0;
 
     // Samplers (shared across all textures)
     this.nearestSampler = device.createSampler({
@@ -60,6 +63,37 @@ export class TextureCache {
     return tex;
   }
 
+  _scheduleFlush() {
+    if (!this._uploadRaf) {
+      this._uploadRaf = requestAnimationFrame(() => this._flushUploads());
+    }
+  }
+
+  _flushUploads() {
+    this._uploadRaf = 0;
+    const batch = this._uploadQueue.splice(0, UPLOADS_PER_FRAME);
+    for (const job of batch) {
+      const tex = this._createFromSource(job.bitmap, job.w, job.h);
+      job.bitmap.close();
+      const entry = {
+        tex,
+        view: tex.createView(),
+        width: job.w,
+        height: job.h,
+        ready: true,
+        isPlaceholder: job.isPlaceholder,
+        insertOrder: this.insertCounter++,
+      };
+      this.cache.set(job.url, entry);
+      this.loading.delete(job.url);
+    }
+    if (batch.length > 0) {
+      this._evict();
+      if (this._onTextureReady) this._onTextureReady();
+    }
+    if (this._uploadQueue.length > 0) this._scheduleFlush();
+  }
+
   isReady(url) {
     if (!url) return false;
     const entry = this.cache.get(url);
@@ -94,21 +128,8 @@ export class TextureCache {
       img.onload = () => {
         const w = img.naturalWidth, h = img.naturalHeight;
         createImageBitmap(img).then(bitmap => {
-          this.loading.delete(url);
-          const tex = this._createFromSource(bitmap, w, h);
-          bitmap.close();
-          const entry = {
-            tex,
-            view: tex.createView(),
-            width: w,
-            height: h,
-            ready: true,
-            isPlaceholder,
-            insertOrder: this.insertCounter++,
-          };
-          this.cache.set(url, entry);
-          this._evict();
-          if (this._onTextureReady) this._onTextureReady();
+          this._uploadQueue.push({ bitmap, url, w, h, isPlaceholder });
+          this._scheduleFlush();
         });
       };
       img.onerror = () => { this.loading.delete(url); };
@@ -160,6 +181,9 @@ export class TextureCache {
   }
 
   destroy() {
+    if (this._uploadRaf) cancelAnimationFrame(this._uploadRaf);
+    for (const job of this._uploadQueue) job.bitmap.close();
+    this._uploadQueue.length = 0;
     for (const entry of this.cache.values()) entry.tex.destroy();
     this.fallback.tex.destroy();
     this.transparent.tex.destroy();
