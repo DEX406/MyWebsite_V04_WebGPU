@@ -10,7 +10,8 @@ export class TextRenderer {
     this.cache = new Map();    // key → { tex, view, width, height, lastUsed }
     this.itemKeys = new Map(); // itemId → current cache key
     this.canvas = document.createElement('canvas');
-    this.ctx = this.canvas.getContext('2d');
+    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+    this._alphaBuf = null; // reusable extraction buffer
     this.sampler = device.createSampler({
       minFilter: 'linear',
       magFilter: 'linear',
@@ -97,15 +98,25 @@ export class TextRenderer {
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-    // Upload canvas to GPUTexture
+    // Extract alpha channel only — text is a 1-bit mask, no need for RGBA.
+    // r8unorm = 1 byte/pixel instead of 4, so 4× less GPU upload bandwidth.
+    const rgba = ctx.getImageData(0, 0, w, h).data;
+    const len = w * h;
+    if (!this._alphaBuf || this._alphaBuf.length < len) {
+      this._alphaBuf = new Uint8Array(len);
+    }
+    const alpha = this._alphaBuf;
+    for (let i = 0; i < len; i++) alpha[i] = rgba[i * 4 + 3];
+
     const tex = device.createTexture({
       size: [w, h],
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      format: 'r8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
-    device.queue.copyExternalImageToTexture(
-      { source: this.canvas, flipY: false },
+    device.queue.writeTexture(
       { texture: tex },
+      alpha,
+      { bytesPerRow: w, rowsPerImage: h },
       [w, h],
     );
 

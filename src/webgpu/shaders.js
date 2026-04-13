@@ -212,7 +212,7 @@ fn fs_main(in: QuadVsOutput) -> @location(0) vec4<f32> {
   // ── Content ──
   var col: vec4<f32>;
   if (u.text_alpha > 0.5) {
-    col = vec4<f32>(u.text_color.rgb, u.text_color.a * tex_sample.a);
+    col = vec4<f32>(u.text_color.rgb, u.text_color.a * tex_sample.r);
   } else if (u.textured > 0.5) {
     col = tex_sample;
   } else {
