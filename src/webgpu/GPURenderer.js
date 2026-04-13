@@ -26,6 +26,7 @@ export class GPURenderer {
     this.context = context;
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this._onNeedsRedraw = null;
+    this._gpuBusy = false;
 
     this.texCache = new TextureCache(device, () => {
       if (this._onNeedsRedraw) this._onNeedsRedraw();
@@ -196,6 +197,7 @@ export class GPURenderer {
   // ── Main render ────────────────────────────────────────────────────────────
 
   render({ items, panX, panY, zoom, bgGrid, globalShadow, selectedIds, editingTextId }) {
+    if (this._gpuBusy) return; // drop frame — GPU still processing previous submit
     this._overlays = []; // media overlay data for DOM positioning
     const device = this.device;
     const dpr = (window.devicePixelRatio || 1) * SUPERSAMPLE;
@@ -464,6 +466,8 @@ export class GPURenderer {
 
     pass.end();
     device.queue.submit([encoder.finish()]);
+    this._gpuBusy = true;
+    device.queue.onSubmittedWorkDone().then(() => { this._gpuBusy = false; });
   }
 
   // ── Collect draw commands ──────────────────────────────────────────────────
