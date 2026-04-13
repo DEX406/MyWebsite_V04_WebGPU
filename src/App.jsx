@@ -91,16 +91,18 @@ export default function App() {
   // ── Media overlay (DOM elements behind canvas for videos/GIFs) ──
   const overlayRef = useRef(null);
   const overlayElsRef = useRef(new Map()); // id → DOM element
+  // ── Blur video overlay (DOM elements ABOVE canvas for blurred video/GIF copies) ──
+  const blurVideoRef = useRef(null);
   const blurElsRef = useRef(new Map()); // blurId → { container, children: Map<mediaId, el> }
 
   const syncOverlays = useCallback((overlays, panX, panY, zoom) => {
     const container = overlayRef.current;
     if (!container) return;
 
-    const mediaOverlays = overlays.filter(o => o.type !== 'blur');
-    const blurOverlays = overlays.filter(o => o.type === 'blur');
+    const mediaOverlays = overlays.filter(o => o.type !== 'blur-video');
+    const blurVideoOverlays = overlays.filter(o => o.type === 'blur-video');
 
-    // ── Regular media overlays (videos/GIFs) ──
+    // ── Regular media overlays (videos/GIFs — behind canvas) ──
     const activeIds = new Set(mediaOverlays.map(o => o.id));
     const els = overlayElsRef.current;
 
@@ -135,44 +137,38 @@ export default function App() {
         container.appendChild(el);
         els.set(o.id, el);
       }
-      // Update src if changed
       if (el.src !== o.src && o.src) {
         el.src = o.src;
         if (el.tagName === 'VIDEO') el.play().catch(() => {});
       }
-      // Position: world coords → screen coords via CSS transform
-      // Render at SUPERSAMPLE× size then scale back down so the browser's
-      // bilinear compositing downsamples the nearest-neighbour image, matching
-      // how the WebGPU canvas supersamples everything else.
       const screenX = o.x * zoom + panX;
       const screenY = o.y * zoom + panY;
       const screenW = o.w * zoom;
       const screenH = o.h * zoom;
       const ss = SUPERSAMPLE;
       const invSS = 1 / ss;
-      // Element is ss× display size; scale(invSS) around center shrinks it
-      // back, shifting the top-left inward by half the excess on each axis.
       el.style.left = (screenX - screenW * (ss - 1) * 0.5) + 'px';
       el.style.top = (screenY - screenH * (ss - 1) * 0.5) + 'px';
       el.style.width = (screenW * ss) + 'px';
       el.style.height = (screenH * ss) + 'px';
-      // z-index must match item z-order so overlapping media layers correctly
-      // (e.g. two GIFs overlapping — "bring to front" must change DOM stacking)
       el.style.zIndex = o.z;
-      // Border radius on both CSS and GPU matte is intentional:
-      // the matte controls the canvas hole shape, CSS clips the DOM element
-      // so the browser skips compositing pixels hidden behind the opaque canvas.
       el.style.borderRadius = (o.radius * zoom * ss) + 'px';
       const rot = o.rotation ? ` rotate(${o.rotation}deg)` : '';
       el.style.transform = `scale(${invSS})${rot}`;
       el.style.transformOrigin = 'center center';
     }
 
-    // ── Blur overlays: blurred video/GIF copies at 1/20th res ──
-    const activeBlurIds = new Set(blurOverlays.map(o => o.id));
+    // ── Blur video overlays: blurred video/GIF copies ABOVE canvas at 1/20th res ──
+    // These sit on top of the WebGPU canvas (which has the blur texture quad).
+    // No matte needed — the blur texture shows static blurred content on GPU,
+    // and these DOM copies overlay the blurred video on top, clipped to the
+    // blur element's shape. The video plays naturally at 1/20th res = always blurry.
+    const aboveContainer = blurVideoRef.current;
+    if (!aboveContainer) return;
+
+    const activeBlurIds = new Set(blurVideoOverlays.map(o => o.id));
     const blurEls = blurElsRef.current;
 
-    // Remove stale blur containers
     for (const [id, entry] of blurEls) {
       if (!activeBlurIds.has(id)) {
         for (const child of entry.children.values()) {
@@ -184,33 +180,31 @@ export default function App() {
     }
 
     const BLUR_SCALE = 1 / 20;
-    const ss = SUPERSAMPLE;
-    const invSS = 1 / ss;
 
-    for (const o of blurOverlays) {
+    for (const o of blurVideoOverlays) {
       let entry = blurEls.get(o.id);
       if (!entry) {
         const div = document.createElement('div');
         div.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;overflow:hidden;transform-origin:center center;';
-        container.appendChild(div);
+        aboveContainer.appendChild(div);
         entry = { container: div, children: new Map() };
         blurEls.set(o.id, entry);
       }
 
-      // Position the blur container (same SUPERSAMPLE math as regular overlays)
+      // Position blur container in CSS pixel space (no SUPERSAMPLE needed —
+      // the above-canvas layer is not supersampled like the WebGPU canvas)
       const bScreenX = o.x * zoom + panX;
       const bScreenY = o.y * zoom + panY;
       const bScreenW = o.w * zoom;
       const bScreenH = o.h * zoom;
       const bDiv = entry.container;
-      bDiv.style.left = (bScreenX - bScreenW * (ss - 1) * 0.5) + 'px';
-      bDiv.style.top = (bScreenY - bScreenH * (ss - 1) * 0.5) + 'px';
-      bDiv.style.width = (bScreenW * ss) + 'px';
-      bDiv.style.height = (bScreenH * ss) + 'px';
-      bDiv.style.zIndex = o.z;
-      bDiv.style.borderRadius = (o.radius * zoom * ss) + 'px';
-      const bRot = o.rotation ? ` rotate(${o.rotation}deg)` : '';
-      bDiv.style.transform = `scale(${invSS})${bRot}`;
+      bDiv.style.left = bScreenX + 'px';
+      bDiv.style.top = bScreenY + 'px';
+      bDiv.style.width = bScreenW + 'px';
+      bDiv.style.height = bScreenH + 'px';
+      bDiv.style.borderRadius = (o.radius * zoom) + 'px';
+      const bRot = o.rotation ? `rotate(${o.rotation}deg)` : '';
+      bDiv.style.transform = bRot || 'none';
 
       // Remove stale child media
       const activeMediaIds = new Set((o.mediaBehind || []).map(m => m.id));
@@ -240,26 +234,23 @@ export default function App() {
             mel.crossOrigin = 'anonymous';
             mel.src = m.src;
           }
-          // No image-rendering:pixelated — we WANT bilinear for smooth blur
+          // No image-rendering:pixelated — bilinear upscale = smooth blur
           mel.style.cssText = 'position:absolute;pointer-events:none;object-fit:cover;transform-origin:0 0;';
           bDiv.appendChild(mel);
           entry.children.set(m.id, mel);
         }
 
-        // Update src if changed
         if (mel.src !== m.src && m.src) {
           mel.src = m.src;
           if (mel.tagName === 'VIDEO') mel.play().catch(() => {});
         }
 
-        // Position media at 1/20th size inside the blur container, CSS scaled up.
-        // Container's local coord system is at ss× scale (before parent invSS transform).
-        // Media offset from blur element in world coords, converted to container-local:
-        const dx = (m.x - o.x) * zoom * ss;
-        const dy = (m.y - o.y) * zoom * ss;
-        const mw = m.w * zoom * ss;
-        const mh = m.h * zoom * ss;
-        // Render at 1/20th size, then scale(1/BLUR_SCALE) to fill — bilinear upscale = blur
+        // Position media relative to blur container in CSS pixels.
+        // Render at 1/20th size then CSS scale up — bilinear upscale = blur.
+        const dx = (m.x - o.x) * zoom;
+        const dy = (m.y - o.y) * zoom;
+        const mw = m.w * zoom;
+        const mh = m.h * zoom;
         const scaleFactor = 1 / BLUR_SCALE;
         mel.style.left = dx + 'px';
         mel.style.top = dy + 'px';
@@ -267,7 +258,7 @@ export default function App() {
         mel.style.height = (mh * BLUR_SCALE) + 'px';
         const mRot = m.rotation ? ` rotate(${m.rotation}deg)` : '';
         mel.style.transform = `scale(${scaleFactor})${mRot}`;
-        mel.style.borderRadius = (m.radius * zoom * ss * BLUR_SCALE) + 'px';
+        mel.style.borderRadius = (m.radius * zoom * BLUR_SCALE) + 'px';
       }
     }
   }, []);
@@ -821,6 +812,9 @@ export default function App() {
 
         {/* WebGPU canvas — renders grid + all content items + matte cutouts */}
         <canvas ref={webgl.setCanvasRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", imageRendering: "auto", zIndex: 1 }} />
+
+        {/* Blur video overlay — low-res video copies above canvas for blur elements over videos */}
+        <div ref={blurVideoRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "hidden", zIndex: 2 }} />
 
         {isAdmin && (
           <div style={{ position: "absolute", top: 0, left: 0, zIndex: Z.HANDLES, pointerEvents: "none" }}>

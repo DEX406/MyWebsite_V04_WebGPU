@@ -549,26 +549,14 @@ export class GPURenderer {
         const texBG = this._getTexBindGroup(blurTex.view, this.texCache.linearSampler);
         draws.push({ uniforms: bu, texBindGroup: texBG, isMatte: false });
 
-        // Pass 3: matte cutout for any videos/GIFs behind this blur element
-        // Check if any media overlays sit below this item in z-order
+        // Blurred video/GIF copies: placed ABOVE the canvas (no matte needed).
+        // The blur texture stays on GPU for static content; blurred video DOM
+        // elements overlay on top, clipped to the blur element's shape.
         const mediaBehind = this._findMediaBehind(item);
         if (mediaBehind.length > 0) {
-          const mu = new Float32Array(40);
-          mu[0] = resW; mu[1] = resH; mu[2] = panX; mu[3] = panY;
-          mu[4] = zoom;
-          mu[5] = (item.rotation || 0) * Math.PI / 180;
-          mu[6] = item.radius ?? 2;
-          mu[7] = 1.0;
-          mu[8] = item.x; mu[9] = item.y;
-          mu[10] = item.w; mu[11] = item.h;
-          mu[12] = item.w + 2; mu[13] = item.h + 2;
-          mu[14] = 1; mu[15] = 1;
-          draws.push({ uniforms: mu, texBindGroup: this._fallbackTexBG, isMatte: true });
-
-          // Record blur overlay for DOM — blurred video/GIF copies
           this._overlays.push({
             id: item.id,
-            type: 'blur',
+            type: 'blur-video',
             x: item.x, y: item.y,
             w: item.w, h: item.h,
             rotation: item.rotation || 0,
@@ -578,7 +566,7 @@ export class GPURenderer {
           });
         }
 
-        // Pass 4: text glyph overlay (text/link items still need their text drawn on top)
+        // Pass 3: text glyph overlay (text/link items still need their text drawn on top)
         if ((item.type === 'text' || item.type === 'link') && editingTextId !== item.id) {
           const entry = this.textRenderer.get(item);
           const textRgba = hexToRgba(item.color || '#C2C0B6');
