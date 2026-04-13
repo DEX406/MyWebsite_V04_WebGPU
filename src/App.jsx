@@ -169,6 +169,7 @@ export default function App() {
     for (const [id, entry] of blurEls) {
       if (!activeBlurIds.has(id)) {
         for (const child of entry.children.values()) {
+          if (child._blurInterval) { clearInterval(child._blurInterval); child._blurImg.src = ''; }
           if (child.tagName === 'VIDEO') { child.pause(); child.src = ''; }
         }
         entry.container.remove();
@@ -210,6 +211,7 @@ export default function App() {
       const activeMediaIds = new Set((o.mediaBehind || []).map(m => m.id));
       for (const [mid, child] of entry.children) {
         if (!activeMediaIds.has(mid)) {
+          if (child._blurInterval) { clearInterval(child._blurInterval); child._blurImg.src = ''; }
           if (child.tagName === 'VIDEO') { child.pause(); child.src = ''; }
           child.remove();
           entry.children.delete(mid);
@@ -221,6 +223,7 @@ export default function App() {
         let mel = entry.children.get(m.id);
         if (!mel) {
           if (m.type === 'video') {
+            // Video: <video> at 1/20th CSS size + scale(20) — browsers decode at display size
             mel = document.createElement('video');
             mel.crossOrigin = 'anonymous';
             mel.autoplay = true;
@@ -229,36 +232,68 @@ export default function App() {
             mel.playsInline = true;
             mel.src = m.src;
             mel.play().catch(() => {});
+            mel.style.cssText = 'position:absolute;pointer-events:none;object-fit:cover;transform-origin:0 0;';
           } else {
-            mel = document.createElement('img');
-            mel.crossOrigin = 'anonymous';
-            mel.src = m.src;
+            // GIF: <canvas> at 1/20th pixel resolution — guaranteed low-res blur.
+            // <img> elements render GIF frames at full resolution regardless of CSS
+            // size, so the 1/20th + scale(20) trick doesn't produce blur for GIFs.
+            // Canvas pixel dimensions control the actual rasterization resolution.
+            mel = document.createElement('canvas');
+            mel.width = Math.max(2, Math.ceil(m.w / 20));
+            mel.height = Math.max(2, Math.ceil(m.h / 20));
+            mel.style.cssText = 'position:absolute;pointer-events:none;';
+            const gifImg = new Image();
+            gifImg.crossOrigin = 'anonymous';
+            gifImg.src = m.src;
+            const gifCtx = mel.getContext('2d');
+            mel._blurImg = gifImg;
+            mel._blurInterval = setInterval(() => {
+              if (gifImg.complete && gifImg.naturalWidth > 0) {
+                gifCtx.drawImage(gifImg, 0, 0, mel.width, mel.height);
+              }
+            }, 100);
           }
-          // No image-rendering:pixelated — bilinear upscale = smooth blur
-          mel.style.cssText = 'position:absolute;pointer-events:none;object-fit:cover;transform-origin:0 0;';
           bDiv.appendChild(mel);
           entry.children.set(m.id, mel);
         }
 
-        if (mel.src !== m.src && m.src) {
-          mel.src = m.src;
-          if (mel.tagName === 'VIDEO') mel.play().catch(() => {});
+        // Update src if changed
+        if (mel.tagName === 'VIDEO') {
+          if (mel.src !== m.src && m.src) { mel.src = m.src; mel.play().catch(() => {}); }
+        } else if (mel._blurImg && mel._blurImg.src !== m.src && m.src) {
+          mel._blurImg.src = m.src;
         }
 
-        // Position media in ss× local space (container is SUPERSAMPLE-scaled).
-        // Render at 1/20th size, CSS scale up — bilinear upscale = blur.
+        // Position media in ss× local space (container is SUPERSAMPLE-scaled)
         const dx = (m.x - o.x) * zoom * bss;
         const dy = (m.y - o.y) * zoom * bss;
         const mw = m.w * zoom * bss;
         const mh = m.h * zoom * bss;
-        const scaleFactor = 1 / BLUR_SCALE;
-        mel.style.left = dx + 'px';
-        mel.style.top = dy + 'px';
-        mel.style.width = (mw * BLUR_SCALE) + 'px';
-        mel.style.height = (mh * BLUR_SCALE) + 'px';
-        const mRot = m.rotation ? ` rotate(${m.rotation}deg)` : '';
-        mel.style.transform = `scale(${scaleFactor})${mRot}`;
-        mel.style.borderRadius = (m.radius * zoom * bss * BLUR_SCALE) + 'px';
+
+        if (mel.tagName === 'CANVAS') {
+          // Canvas: full CSS size, low pixel resolution → guaranteed blur
+          mel.style.left = dx + 'px';
+          mel.style.top = dy + 'px';
+          mel.style.width = mw + 'px';
+          mel.style.height = mh + 'px';
+          // Update pixel dimensions if element was resized
+          const pw = Math.max(2, Math.ceil(m.w / 20));
+          const ph = Math.max(2, Math.ceil(m.h / 20));
+          if (mel.width !== pw || mel.height !== ph) { mel.width = pw; mel.height = ph; }
+          const mRot = m.rotation ? `rotate(${m.rotation}deg)` : '';
+          mel.style.transform = mRot || 'none';
+          mel.style.borderRadius = (m.radius * zoom * bss) + 'px';
+        } else {
+          // Video: 1/20th CSS size + scale(20) — bilinear upscale = blur
+          const scaleFactor = 1 / BLUR_SCALE;
+          mel.style.left = dx + 'px';
+          mel.style.top = dy + 'px';
+          mel.style.width = (mw * BLUR_SCALE) + 'px';
+          mel.style.height = (mh * BLUR_SCALE) + 'px';
+          const mRot = m.rotation ? ` rotate(${m.rotation}deg)` : '';
+          mel.style.transform = `scale(${scaleFactor})${mRot}`;
+          mel.style.borderRadius = (m.radius * zoom * bss * BLUR_SCALE) + 'px';
+        }
       }
     }
   }, []);
@@ -273,6 +308,7 @@ export default function App() {
       overlayElsRef.current.clear();
       for (const entry of blurElsRef.current.values()) {
         for (const child of entry.children.values()) {
+          if (child._blurInterval) { clearInterval(child._blurInterval); child._blurImg.src = ''; }
           if (child.tagName === 'VIDEO') { child.pause(); child.src = ''; }
         }
         entry.container.remove();

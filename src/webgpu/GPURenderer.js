@@ -887,11 +887,10 @@ export class GPURenderer {
 
     for (const blurItem of blurItems) {
       if (blurItem.w <= 0 || blurItem.h <= 0) continue;
-      // Compute blur texture size (1/20th of element's screen size)
-      const screenW = blurItem.w * zoomDpr;
-      const screenH = blurItem.h * zoomDpr;
-      const blurW = Math.max(2, Math.ceil(screenW * scale));
-      const blurH = Math.max(2, Math.ceil(screenH * scale));
+      // Compute blur texture size (1/20th of element's WORLD size — zoom-independent).
+      // This ensures consistent blur appearance regardless of zoom level.
+      const blurW = Math.max(2, Math.ceil(blurItem.w * scale));
+      const blurH = Math.max(2, Math.ceil(blurItem.h * scale));
       const blurTex = this._getOrCreateBlurTexture(blurItem.id, blurW, blurH);
 
       // Compute offscreen viewport uniforms:
