@@ -3,7 +3,7 @@
 // Videos and GIFs are rendered via DOM overlay (not GPU textures) for iOS compatibility.
 
 const MAX_TEXTURES = 200;
-const UPLOADS_PER_FRAME = 2;
+const UPLOADS_PER_FRAME = 1;
 
 export class TextureCache {
   constructor(device, onTextureReady) {
