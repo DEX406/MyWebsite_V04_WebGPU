@@ -9,7 +9,9 @@ export function usePointerInput({
   resizingRef, setResizing,
   rotatingRef, setRotating,
   editingConnectorRef, setEditingConnector,
+  editingTextId,
   setEditingTextId,
+  closeTextEditing,
   effectiveSnapRef,
   scheduleSave, animateTo, pushUndo,
   doHitTest,
@@ -26,6 +28,12 @@ export function usePointerInput({
     if (e.pointerType === "touch") return;
     if (e.button === 1) { e.preventDefault(); isPanningRef.current = true; panStartRef.current = { x: e.clientX - panRef.current.x, y: e.clientY - panRef.current.y }; if (canvasRef.current) canvasRef.current.style.cursor = "grabbing"; return; }
     if (e.button !== 0) return;
+
+    // If text edit is active, close it before any other canvas interaction so
+    // GPU text is re-rasterized immediately and subsequent clicks don't stall it.
+    if (editingTextId && !e.target.closest('textarea[data-ui]') && !e.target.closest('[data-ui]')) {
+      closeTextEditing();
+    }
 
     // Alt+drag → box select
     if (e.altKey && isAdmin && !e.target.closest("[data-ui]")) {
@@ -186,6 +194,11 @@ export function usePointerInput({
       const dx = (e.clientX - rsz.startX) / zoomRef.current;
       const dy = (e.clientY - rsz.startY) / zoomRef.current;
       const r = computeResize(rsz.item, rsz.handle, dx, dy, es);
+      // Keep the DOM textarea dimensions in sync while editing text so wrapping
+      // previews live during resize drag (GPU path remains bypassed in edit mode).
+      if (editingTextId === rsz.id) {
+        setItems(p => p.map(i => i.id === rsz.id ? { ...i, x: r.x, y: r.y, w: r.w, h: r.h } : i));
+      }
       itemOverrideRef.current = { id: rsz.id, props: { x: r.x, y: r.y, w: r.w, h: r.h } };
       if (drawBgRef.current) drawBgRef.current();
     } else if (rot) {
@@ -199,7 +212,7 @@ export function usePointerInput({
       applyTransform();
       updateDisplays();
     }
-  }, [applyTransform, updateDisplays]);
+  }, [applyTransform, updateDisplays, editingTextId, setItems]);
 
   const handlePointerUp = useCallback((e) => {
     if (e?.pointerType === "touch") return;

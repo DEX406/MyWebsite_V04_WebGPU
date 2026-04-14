@@ -291,6 +291,10 @@ export default function App() {
   // ── Item CRUD ──
   const maxZ = (arr) => arr.length ? Math.max(...arr.map(i => i.z)) : 0;
   const updateItem = (id, updates) => setItemsAndSave(p => p.map(i => i.id === id ? { ...i, ...updates } : i));
+  const closeTextEditing = useCallback(() => {
+    setEditingTextId(prev => prev === null ? prev : null);
+    requestAnimationFrame(() => drawBgRef.current?.());
+  }, [drawBgRef]);
   // Mipmap updater: displaySrc/placeholderSrc/targetSrc changes are silent (no save),
   // but srcQ50/srcQ25/srcQ12/srcQ6 trigger a save
   const updateItemMipmap = useCallback((id, updates) => {
@@ -359,7 +363,7 @@ export default function App() {
     vp, items, setItems, selectedIds, setSelectedIds, isAdmin,
     draggingRef, setDragging, resizingRef, setResizing,
     rotatingRef, setRotating, editingConnectorRef, setEditingConnector,
-    setEditingTextId, effectiveSnapRef, scheduleSave, animateTo, pushUndo,
+    editingTextId, setEditingTextId, closeTextEditing, effectiveSnapRef, scheduleSave, animateTo, pushUndo,
     doHitTest: webgl.doHitTest, setBoxSelect, dragDeltaRef, itemOverrideRef,
   });
 
@@ -709,7 +713,7 @@ export default function App() {
         {isAdmin && (
           <div style={{ position: "absolute", top: 0, left: 0, zIndex: Z.HANDLES, pointerEvents: "none" }}>
             <div ref={canvasHandlesRef} style={{ transform: `translate(${vp.panRef.current.x}px,${vp.panRef.current.y}px) scale(${vp.zoomRef.current})`, transformOrigin: "0 0", '--inv-zoom': 1 / vp.zoomRef.current }}>
-              {sortedItems.map(item => <CanvasItem key={item.id} item={item} selectedIds={selectedIds} isAdmin={isAdmin} editingTextId={editingTextId} updateItem={updateItem} setEditingTextId={setEditingTextId} />)}
+              {sortedItems.map(item => <CanvasItem key={item.id} item={item} selectedIds={selectedIds} isAdmin={isAdmin} editingTextId={editingTextId} updateItem={updateItem} closeTextEditing={closeTextEditing} />)}
             </div>
           </div>
         )}
